@@ -183,7 +183,13 @@ static int32_t pad_axis(SDL_GameController *c, uint32_t dev, int i) {
 
 static int pad_button(SDL_GameController *c, int i) {
     static const SDL_GameControllerButton bt[12] = {
-        SDL_CONTROLLER_BUTTON_X, SDL_CONTROLLER_BUTTON_A, SDL_CONTROLLER_BUTTON_B, SDL_CONTROLLER_BUTTON_Y,
+        SDL_CONTROLLER_BUTTON_X,
+#ifdef __SWITCH__  /* Nintendo's way round: action on A (east), cancel on B (south) */
+        SDL_CONTROLLER_BUTTON_B, SDL_CONTROLLER_BUTTON_A,
+#else
+        SDL_CONTROLLER_BUTTON_A, SDL_CONTROLLER_BUTTON_B,
+#endif
+        SDL_CONTROLLER_BUTTON_Y,
         SDL_CONTROLLER_BUTTON_LEFTSHOULDER, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 0, 0, SDL_CONTROLLER_BUTTON_BACK,
         SDL_CONTROLLER_BUTTON_START, SDL_CONTROLLER_BUTTON_LEFTSTICK, SDL_CONTROLLER_BUTTON_RIGHTSTICK};
     if (!c || i >= 12) return 0;
