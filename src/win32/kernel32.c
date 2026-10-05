@@ -383,8 +383,11 @@ WINAPI(GetCurrentProcessId, "GetCurrentProcessId", 0) { return 0x1234; }
 WINAPI(SetThreadPriority, "SetThreadPriority", 2) { return 1; }
 WINAPI(GetThreadPriority, "GetThreadPriority", 1) { return 0; }
 WINAPI(SetThreadPriorityBoost, "SetThreadPriorityBoost", 2) { return 1; }
+/* Sleep(0) sleeps 0.1 ms rather than yielding: the game's frame limiters (0x4F6CE0 at
+ * 30 Hz, 0x518AD0 at 60 Hz) spin on it until a QueryPerformanceCounter deadline, which otherwise
+ * keeps two cores busy doing nothing. */
 WINAPI(Sleep, "Sleep", 1) {
-    if (ARG(0)) usleep(ARG(0) * 1000u); else sched_yield();
+    usleep(ARG(0) ? ARG(0) * 1000u : 100);
     return 0;
 }
 
