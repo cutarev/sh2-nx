@@ -297,10 +297,11 @@ METHOD(di_CreateDevice, 4) {
     MEM32(ARG(2)) = d;
     return 0;
 }
-/* Offers the gamepad to a game-controller enumeration: BOOL CALLBACK cb(const DIDEVICEINSTANCEA *, void *). */
+/* Offers the gamepad to a game-controller enumeration: BOOL CALLBACK cb(const DIDEVICEINSTANCEA *, void *).
+ * Not to one asking for DIEDFL_FORCEFEEDBACK: the game would then drive a vibration effect it never got. */
 METHOD(di_EnumDevices, 5) {
     uint32_t type = ARG(1) & 0xFF;
-    if ((type == 0 || type == 4 || type == 0x14 || type == 0x15) && get_pad()) {
+    if ((type == 0 || type == 4 || type == 0x14 || type == 0x15) && !(ARG(4) & 0x100) && get_pad()) {
         uint32_t di = galloc(580), a[2] = {di, ARG(3)};
         fill_instance(di, DEV_PAD);
         guest_call(ARG(2), 2, a, 1);
