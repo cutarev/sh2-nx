@@ -65,6 +65,15 @@ sdmc:/switch/sh2-nx/data/
 Launch it from the homebrew menu in title takeover mode (hold R while starting a game), not from the
 album: applet mode does not give homebrew enough memory. Settings and saves are written next to it.
 
+## Controls
+
+The pad defaults to Silent Hill 2: Enhanced Edition's layout (remap in Options > Control Options):
+
+- Switch: A action, B cancel and flashlight, Y run, X map, L/R cycle target, ZL search mode,
+  ZR aim lock, + inventory, - pause/skip.
+- Xbox-style pad (Linux): A action, B cancel and flashlight, X run, Y map, LB/RB cycle target,
+  LT search mode, RT aim lock, Start inventory, Back pause/skip.
+
 ## Layout
 
 - `tools/regen.sh`: the whole recompilation pipeline (PE to XBE wrapper, disassembly with extra

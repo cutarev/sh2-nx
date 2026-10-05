@@ -169,8 +169,9 @@ static uint32_t axis(uint32_t dev, int v) {  /* SDL -32768..32767 to the range t
     return (uint32_t)(lo + (int32_t)(((int64_t)v + 32768) * (hi - lo) / 65535));
 }
 
-/* The pad as DirectInput objects: X/Y the left stick, Z/Rz the right one, a hat, and 12 buttons
- * (A B X Y LB RB Back Start LS RS, then the triggers). */
+/* The pad as DirectInput objects, numbered like SH2EE's Xidi on PC (StandardGamepad, face buttons
+ * X A B Y): X/Y the left stick, Z/Rz the right one, a hat, and 12 buttons
+ * X A B Y LB RB LT RT Back Start LS RS. SDL names buttons by position (Xbox layout), on the Switch too. */
 enum { OBJ_AXIS, OBJ_BUTTON, OBJ_POV };
 static const uint32_t axis_guid[4] = {0xA36D02E0u, 0xA36D02E1u, 0xA36D02E2u, 0xA36D02E3u};  /* X Y Z Rz */
 
@@ -181,13 +182,20 @@ static int32_t pad_axis(SDL_GameController *c, uint32_t dev, int i) {
 }
 
 static int pad_button(SDL_GameController *c, int i) {
-    static const SDL_GameControllerButton bt[10] = {
-        SDL_CONTROLLER_BUTTON_A, SDL_CONTROLLER_BUTTON_B, SDL_CONTROLLER_BUTTON_X, SDL_CONTROLLER_BUTTON_Y,
-        SDL_CONTROLLER_BUTTON_LEFTSHOULDER, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, SDL_CONTROLLER_BUTTON_BACK,
+    static const SDL_GameControllerButton bt[12] = {
+        SDL_CONTROLLER_BUTTON_X,
+#ifdef __SWITCH__  /* Nintendo's way round: action on A (east), cancel on B (south) */
+        SDL_CONTROLLER_BUTTON_B, SDL_CONTROLLER_BUTTON_A,
+#else
+        SDL_CONTROLLER_BUTTON_A, SDL_CONTROLLER_BUTTON_B,
+#endif
+        SDL_CONTROLLER_BUTTON_Y,
+        SDL_CONTROLLER_BUTTON_LEFTSHOULDER, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 0, 0, SDL_CONTROLLER_BUTTON_BACK,
         SDL_CONTROLLER_BUTTON_START, SDL_CONTROLLER_BUTTON_LEFTSTICK, SDL_CONTROLLER_BUTTON_RIGHTSTICK};
     if (!c || i >= 12) return 0;
-    if (i < 10) return SDL_GameControllerGetButton(c, bt[i]);
-    return SDL_GameControllerGetAxis(c, i == 10 ? SDL_CONTROLLER_AXIS_TRIGGERLEFT : SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000;
+    if (i == 6 || i == 7)
+        return SDL_GameControllerGetAxis(c, i == 6 ? SDL_CONTROLLER_AXIS_TRIGGERLEFT : SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000;
+    return SDL_GameControllerGetButton(c, bt[i]);
 }
 
 static uint32_t pad_pov(SDL_GameController *c) {  /* hundredths of a degree clockwise from north */
@@ -320,8 +328,19 @@ static const ComEntry di_vt[] = {
     {"IDirectInput8::ConfigureDevices", NULL},
 };
 
+/* The game's default pad bindings, (button, action bit) pairs at 0x75A208 that its "reset controls"
+ * (0x5AECA0) copies when there is no keyconf.dat, suit some other pad: these are SH2EE's, on the
+ * numbering above. */
+static const int32_t pad_defaults[44] = {
+    -1, 4, -1, 8, -1, 1, -1, 2,                  /* move: the stick */
+    4, 1024, 5, 2048, 1, 512, 2, 128,            /* cycle target LB / RB, action A, cancel B */
+    8, 16, 0, 32768, 6, 4096, 9, 32,             /* skip/pause Back, run X, search LT, inventory Start */
+    2, 8192, 3, 256, -1, 64, 7, 16384,           /* light B, map Y, use health -, aim lock RT */
+    -1, 524288, -1, 1048576, -1, 2097152, -1, 4194304, -1, 8388608, -1, 16777216};  /* weapons, quick save/load */
+
 WINAPI(DirectInput8Create, "DirectInput8Create", 5) {
     SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
+    memcpy(GPTR(0x75A208), pad_defaults, sizeof pad_defaults);
     MEM32(ARG(3)) = com_new(com_vtable(di_vt, sizeof di_vt / sizeof *di_vt), 8);
     return 0;
 }
