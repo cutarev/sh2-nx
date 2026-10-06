@@ -31,7 +31,7 @@ static int match_ci(const char *dir, const char *name, char *out, size_t n) {
     return found;
 }
 
-const char *rt_path(const char *guest, char *out, size_t n) {
+static const char *resolve(const char *guest, char *out, size_t n) {
     char tmp[512];
     snprintf(tmp, sizeof tmp, "%s", guest);
     for (char *c = tmp; *c; c++) if (*c == '\\') *c = '/';
@@ -62,6 +62,23 @@ const char *rt_path(const char *guest, char *out, size_t n) {
         while (*s == '/') s++;
     }
     if (!len) snprintf(out, n, ".");
+    return out;
+}
+
+/* SH2EE's audio pack (music and voices): a file under data/sound is read from the same place under
+ * sh2e/ when it is there, as SH2EE's d3d8.dll arranges on Windows.
+ * ponytail: the rest of sh2e/ needs the module's code patches, which here would have to be applied
+ * to the exe before recompiling: its sound effects bank (sound/sddata.bin) and image pack overrun
+ * the game's static load buffers (0xBDDD40, 0x1DBC040; SfxPatch, TexPatch), and its 60 fps FMVs play
+ * at half speed while the movie loop calls the 30 Hz frame limiter (0x43DD90; PatchFMVFramerate). */
+const char *rt_path(const char *guest, char *out, size_t n) {
+    char mod[512];
+    struct stat st;
+    resolve(guest, out, n);
+    if (!strncasecmp(out, "data/sound/", 11) && strcasecmp(out, "data/sound/sddata.bin")) {
+        snprintf(mod, sizeof mod, "sh2e/%s", out + 5);
+        if (!stat(resolve(mod, mod, sizeof mod), &st) && S_ISREG(st.st_mode)) snprintf(out, n, "%s", mod);
+    }
     return out;
 }
 
@@ -664,7 +681,7 @@ static int find_fill(Obj *o, uint32_t fd) {
         char p[1024];
         struct stat st;
         snprintf(p, sizeof p, "%s/%s", o->dirpath, e->d_name);
-        if (stat(p, &st)) continue;
+        if (stat(rt_path(p, p, sizeof p), &st)) continue;  /* the size of what opening it reads (SH2EE's music) */
         find_entry(fd, e->d_name, S_ISDIR(st.st_mode), (uint64_t)st.st_size);
         return 1;
     }
