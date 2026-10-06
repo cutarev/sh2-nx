@@ -71,6 +71,8 @@ typedef struct Obj {
     int type;
     FILE *f;
     int signaled, manual, count;       /* events, mutexes (count = recursion), threads (signaled = done) */
+    int waiters, pulsed;               /* threads in wait_one; how many of them the last PulseEvent frees */
+    uint32_t pulse;                    /* PulseEvent count, so a wait knows a pulse came after it began */
     HostThread *owner, *thread;        /* mutexes: who holds it; threads: the host thread */
     uint32_t exit_code, tid, suspended;
     int started;
@@ -142,14 +144,19 @@ static uint32_t wait_one(uint32_t h, uint32_t ms) {
     ts.tv_nsec += (ms % 1000) * 1000000L;
     if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
     pthread_mutex_lock(&obj_mx);
-    while (!ready(o)) {
+    uint32_t pulse = o->pulse;
+    o->waiters++;
+    while (!ready(o) && !(o->pulse != pulse && o->pulsed)) {
         if (ms == 0 || (ms != 0xFFFFFFFFu && pthread_cond_timedwait(&obj_cv, &obj_mx, &ts) == ETIMEDOUT)) {
+            o->waiters--;
             pthread_mutex_unlock(&obj_mx);
             return WAIT_TIMEOUT;
         }
         if (ms == 0xFFFFFFFFu) pthread_cond_wait(&obj_cv, &obj_mx);
     }
-    acquire(o);
+    if (ready(o)) acquire(o);
+    else o->pulsed--;
+    o->waiters--;
     pthread_mutex_unlock(&obj_mx);
     return 0;
 }
@@ -172,12 +179,21 @@ WINAPI(CreateEventA, "CreateEventA", 4) {
     return h;
 }
 WINAPI(SetEvent, "SetEvent", 1) { Obj *o = obj(ARG(0)); if (o) signal_obj(o, 1); return o != NULL; }
+/* Frees the threads waiting right now (one, for an auto-reset event) and leaves the event reset.
+ * Setting and resetting it instead loses the pulse whenever the reset wins the race with the woken
+ * waiter: CRI's ADX server thread waits on one, pulsed by a 17 ms timer, and missing pulses left the
+ * music silent, or looping its stream buffer. */
 WINAPI(PulseEvent, "PulseEvent", 1) {
     Obj *o = obj(ARG(0));
     if (!o) return 0;
-    signal_obj(o, 1);
-    sched_yield();
-    signal_obj(o, 0);
+    pthread_mutex_lock(&obj_mx);
+    if (o->waiters) {
+        o->pulse++;
+        o->pulsed = o->manual ? o->waiters : 1;
+        pthread_cond_broadcast(&obj_cv);
+    }
+    o->signaled = 0;
+    pthread_mutex_unlock(&obj_mx);
     return 1;
 }
 
