@@ -12,9 +12,11 @@
 struct HostThread {
     void (*fn)(void *);
     void *arg;
-    volatile int paused;
 #ifdef __SWITCH__
     Thread thr;
+    Mutex m;
+    CondVar cv;
+    int wakes, stopped;  /* resumes not yet used up; paused by another thread (svcSetThreadActivity) */
 #else
     pthread_t pt;
     int wake[2];
@@ -53,19 +55,32 @@ HostThread *host_thread_adopt(void) {
 
 void host_thread_exit(void) { threadExit(); }
 
+/* A resume may land before the pause it answers (SuspendThread counts under a lock, then pauses
+ * outside it, and CRI's worker suspends itself while another thread resumes it): it is kept as a
+ * wake that the pause then uses up instead of stopping. */
 void host_thread_pause(HostThread *t) {
+    mutexLock(&t->m);
     if (t == self) {  /* Horizon pauses other threads only: a thread suspending itself waits here */
-        t->paused = 1;
-        while (t->paused) svcSleepThread(1000000);
-        return;
+        while (!t->wakes) condvarWait(&t->cv, &t->m);
+        t->wakes--;
+    } else if (t->wakes) t->wakes--;
+    else if (t->thr.handle) {
+        t->stopped = 1;
+        svcSetThreadActivity(t->thr.handle, ThreadActivity_Paused);
     }
-    t->paused = 1;
-    if (t->thr.handle) svcSetThreadActivity(t->thr.handle, ThreadActivity_Paused);
+    mutexUnlock(&t->m);
 }
 
 void host_thread_resume(HostThread *t) {
-    t->paused = 0;
-    if (t != self && t->thr.handle) svcSetThreadActivity(t->thr.handle, ThreadActivity_Runnable);
+    mutexLock(&t->m);
+    if (t->stopped) {
+        t->stopped = 0;
+        svcSetThreadActivity(t->thr.handle, ThreadActivity_Runnable);
+    } else {
+        t->wakes++;
+        condvarWakeOne(&t->cv);
+    }
+    mutexUnlock(&t->m);
 }
 
 /* ---- the guest window: 4 GB of address space, memory mapped in as the guest needs it ----
@@ -130,12 +145,12 @@ void host_backtrace(int fd) { (void)fd; }
 #include <sys/mman.h>
 #include <execinfo.h>
 
-/* SIGUSR2 parks a thread in this handler until host_thread_resume. */
+/* SIGUSR2 parks a thread in this handler until host_thread_resume writes a byte to its pipe. A resume
+ * may land before the pause it answers (see the Switch side): its byte is already there. */
 static void on_pause(int sig) {
     (void)sig;
     char c;
-    while (self && self->paused)
-        if (read(self->wake[0], &c, 1) < 0 && errno != EINTR) break;
+    while (self && read(self->wake[0], &c, 1) < 0 && errno == EINTR) {}
 }
 
 static void alt_stack(void);
@@ -178,13 +193,11 @@ HostThread *host_thread_adopt(void) {
 void host_thread_exit(void) { pthread_exit(NULL); }
 
 void host_thread_pause(HostThread *t) {
-    t->paused = 1;
     if (t == self) on_pause(SIGUSR2);
     else pthread_kill(t->pt, SIGUSR2);
 }
 
 void host_thread_resume(HostThread *t) {
-    t->paused = 0;
     if (write(t->wake[1], "", 1) < 0) rt_log("resume: wake failed");
 }
 
