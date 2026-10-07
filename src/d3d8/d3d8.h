@@ -77,6 +77,7 @@ void res_upload_dirty(Res *t);   /* pushes locked texture levels to GL before a 
 void res_bind_targets(void);     /* attaches dev->rt / dev->ds to the FBO */
 /* CopyRects: surface rectangles to another surface (guest copies, then GL). */
 uint32_t res_copy_rects(uint32_t src, uint32_t rects, uint32_t n, uint32_t dst, uint32_t points);
+void res_snapshot_front(void);  /* keeps the presented frame for GetFrontBuffer */
 uint32_t res_read_front(uint32_t dst);
 void res_init_vtables(void);
 

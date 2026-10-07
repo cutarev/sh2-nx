@@ -89,6 +89,7 @@ static uint32_t sync_flags(uint32_t va, uint32_t r) {
     MEM32(va + 12) = 0x3 | (feof(f) ? 0x10 : 0) | (ferror(f) ? 0x20 : 0);  /* _IOREAD|_IOWRT, _IOEOF, _IOERR */
     return r;
 }
+void ee_file_opened(const char *guest, FILE *f);  /* src/game/ee.c */
 CDECL(c_fopen, "fopen") {
     char path[512], mode[8];
     rt_path(GSTR(ARG(0)), path, sizeof path);
@@ -97,6 +98,7 @@ CDECL(c_fopen, "fopen") {
     FILE *f = fopen(path, mode);
     if (rt_trace) rt_log("  fopen %s (%s) -> %s", GSTR(ARG(0)), path, f ? "ok" : "FAILED");
     if (!f) return 0;
+    if (!strchr(mode, 'w') && !strchr(mode, 'a') && !strchr(mode, '+')) ee_file_opened(GSTR(ARG(0)), f);
     for (uint32_t i = 1; i < 256; i++)
         if (!files[i]) {
             files[i] = f;

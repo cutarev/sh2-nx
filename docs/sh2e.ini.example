@@ -1,0 +1,16 @@
+; Enhanced Edition packs: data/<folder>/X is read from sh2e/<folder>/X when it exists (1 = on).
+; The title and save screen art always comes from sh2e/ when it is there.
+; movie stays 0: the FMV pack plays at half speed until its frame-rate patch is ported.
+pic=1
+menu=1
+bg=1
+bg2=1
+chr=1
+chr2=1
+font=1
+etc=1
+sound=1
+movie=0
+; hdmaps=1               HD map pages (their layout is off: EE's map scaling is not ported)
+; resolution=1280x720    the default; 1920x1080 for docked play; 960x720 is the original 4:3
+; cores=1                every game thread on one core (fallback if the music ever loops)

@@ -35,7 +35,7 @@ METHOD(dev_AddRef, 1) { return 1; }
 METHOD(dev_Release, 1) { return 0; }
 METHOD(dev_GetCapabilities, 2) {
     uint32_t c = ARG(1), kind = DEV_KIND(THIS);
-    MEM32(c + 4) = 1;                                  /* DIDC_ATTACHED */
+    MEM32(c + 4) = 1 | (kind == DEV_PAD ? 0x100 : 0);  /* DIDC_ATTACHED | DIDC_FORCEFEEDBACK */
     MEM32(c + 8) = kind == DEV_PAD ? 0x10215 : 0x13;
     MEM32(c + 12) = kind == DEV_PAD ? 4 : 0;           /* axes */
     MEM32(c + 16) = kind == DEV_PAD ? 12 : 256;        /* buttons */
@@ -118,11 +118,132 @@ METHOD(dev_SetEventNotification, 2) { return 0; }
 METHOD(dev_SetCooperativeLevel, 3) { return 0; }
 METHOD(dev_GetDeviceInfo, 2) { fill_instance(ARG(1), DEV_KIND(THIS)); return 0; }
 METHOD(dev_Poll, 1) { return 0; }
-/* No force feedback is offered (GetCapabilities has no DIDC_FORCEFEEDBACK): nothing to enumerate. */
-METHOD(dev_EnumEffects, 4) { return 0; }
+/* ---- force feedback: every DirectInput effect becomes a rumble of the pad (Switch HD rumble via SDL) ----
+ * An effect object keeps its GUID Data1, magnitude (0..10000 after gain) and duration (microseconds). */
+#define EFF_GUID(o) MEM32((o) + 4)
+#define EFF_MAG(o) MEM32((o) + 8)
+#define EFF_DUR(o) MEM32((o) + 12)
+#define EFF_ON(o) MEM32((o) + 16)
+static int ff_muted;  /* DISFFC_STOPALL / SETACTUATORSOFF */
+
+uint32_t ee_rumble_gain(uint32_t magnitude);  /* src/game/ee.c: the game's Vibration option */
+
+static void rumble(uint32_t mag, uint32_t dur_us) {
+    SDL_GameController *c = get_pad();
+    if (!c) return;
+    if (ff_muted) mag = 0;
+    mag = ee_rumble_gain(mag);
+    uint32_t ms = dur_us == 0xFFFFFFFFu || dur_us == 0 ? 0xFFFFFFFFu : (dur_us + 999) / 1000;
+    if (ms > 10000) ms = 10000;  /* "infinite" effects are refreshed by Start or stopped explicitly */
+    uint16_t v = (uint16_t)(mag > 10000 ? 0xFFFF : mag * 0xFFFFu / 10000);
+    SDL_GameControllerRumble(c, v, v, mag ? ms : 0);
+}
+
+/* Reads a DIEFFECT: duration, gain and the magnitude from the type-specific block
+ * (DICONSTANTFORCE.lMagnitude, DIPERIODIC.dwMagnitude, DIRAMPFORCE start/end). */
+static void eff_read(uint32_t e, uint32_t p, uint32_t flags) {
+    if (!p) return;
+    if (flags & 1) EFF_DUR(e) = MEM32(p + 8);                     /* DIEP_DURATION */
+    uint32_t gain = (flags & 4) ? MEM32(p + 16) : 10000;          /* DIEP_GAIN */
+    if (gain > 10000 || !(flags & 4)) gain = 10000;
+    uint32_t cb = MEM32(p + 44), ts = MEM32(p + 48);
+    if ((flags & 0x200) && ts && cb >= 4) {                        /* DIEP_TYPESPECIFICPARAMS */
+        int32_t m;
+        if (EFF_GUID(e) == 0x13541C21u && cb >= 8) {               /* ramp: the stronger end */
+            int32_t a = (int32_t)MEM32(ts), b = (int32_t)MEM32(ts + 4);
+            m = abs(a) > abs(b) ? a : b;
+        } else if (EFF_GUID(e) >= 0x13541C22u && EFF_GUID(e) <= 0x13541C26u)
+            m = (int32_t)MEM32(ts);                                /* periodic: dwMagnitude */
+        else
+            m = (int32_t)MEM32(ts);                                /* constant: lMagnitude */
+        EFF_MAG(e) = (uint32_t)abs(m) * gain / 10000;
+    }
+}
+
+void dinput_rumble_stop(void) { rumble(0, 0); }
+
+METHOD(eff_AddRef, 1) { return 1; }
+METHOD(eff_Release, 1) { if (EFF_ON(THIS)) rumble(0, 0); return 0; }
+METHOD(eff_Initialize, 4) { return 0; }
+METHOD(eff_GetEffectGuid, 2) { memset(GPTR(ARG(1)), 0, 16); MEM32(ARG(1)) = EFF_GUID(THIS); return 0; }
+METHOD(eff_GetParameters, 3) { return 0; }
+METHOD(eff_SetParameters, 3) {
+    eff_read(THIS, ARG(1), ARG(2));
+    if (EFF_ON(THIS) || (ARG(2) & 0x20000000u)) {                  /* DIEP_START */
+        EFF_ON(THIS) = 1;
+        rumble(EFF_MAG(THIS), EFF_DUR(THIS));
+    }
+    return 0;
+}
+METHOD(eff_Start, 3) { EFF_ON(THIS) = 1; rumble(EFF_MAG(THIS), EFF_DUR(THIS)); return 0; }
+METHOD(eff_Stop, 1) { EFF_ON(THIS) = 0; rumble(0, 0); return 0; }
+METHOD(eff_GetEffectStatus, 2) { MEM32(ARG(1)) = EFF_ON(THIS) ? 1 : 0; return 0; }
+METHOD(eff_Download, 1) { return 0; }
+METHOD(eff_Unload, 1) { return 0; }
+METHOD(eff_Escape, 2) { return 0x80004001u; }
+
+static const ComEntry eff_vt[] = {
+    {"IDirectInputEffect::QueryInterface", NULL}, {"IDirectInputEffect::AddRef", eff_AddRef},
+    {"IDirectInputEffect::Release", eff_Release}, {"IDirectInputEffect::Initialize", eff_Initialize},
+    {"IDirectInputEffect::GetEffectGuid", eff_GetEffectGuid}, {"IDirectInputEffect::GetParameters", eff_GetParameters},
+    {"IDirectInputEffect::SetParameters", eff_SetParameters}, {"IDirectInputEffect::Start", eff_Start},
+    {"IDirectInputEffect::Stop", eff_Stop}, {"IDirectInputEffect::GetEffectStatus", eff_GetEffectStatus},
+    {"IDirectInputEffect::Download", eff_Download}, {"IDirectInputEffect::Unload", eff_Unload},
+    {"IDirectInputEffect::Escape", eff_Escape},
+};
+
+/* CreateEffect(rguid, const DIEFFECT *, LPDIRECTINPUTEFFECT *, outer) */
+METHOD(dev_CreateEffect, 5) {
+    static uint32_t vt;
+    if (DEV_KIND(THIS) != DEV_PAD) return 0x80004001u;
+    if (!vt) vt = com_vtable(eff_vt, sizeof eff_vt / sizeof *eff_vt);
+    uint32_t e = com_new(vt, 32);
+    EFF_GUID(e) = ARG(1) ? MEM32(ARG(1)) : 0x13541C20u;
+    EFF_MAG(e) = 10000;
+    EFF_DUR(e) = 0xFFFFFFFFu;
+    eff_read(e, ARG(2), 0xFFFFFFFFu & ~0x20000000u);
+    rt_log("pad effect %08X created: magnitude %u duration %u us", EFF_GUID(e), EFF_MAG(e), EFF_DUR(e));
+    MEM32(ARG(3)) = e;
+    return 0;
+}
+
+/* EnumEffects(cb, ref, type): BOOL CALLBACK cb(const DIEFFECTINFOA *, void *) for constant and periodic forces. */
+METHOD(dev_EnumEffects, 4) {
+    static const struct { uint32_t guid, type; const char *name; } fx[] = {
+        {0x13541C20u, 0x01, "Constant Force"}, {0x13541C21u, 0x02, "Ramp Force"},
+        {0x13541C22u, 0x03, "Square"}, {0x13541C23u, 0x03, "Sine"}, {0x13541C24u, 0x03, "Triangle"},
+        {0x13541C25u, 0x03, "Sawtooth Up"}, {0x13541C26u, 0x03, "Sawtooth Down"},
+    };
+    if (DEV_KIND(THIS) != DEV_PAD || !get_pad()) return 0;
+    uint32_t want = ARG(3) & 0xFF, info = galloc(296);
+    for (size_t i = 0; i < sizeof fx / sizeof *fx; i++) {
+        if (want && want != fx[i].type) continue;
+        memset(GPTR(info), 0, 296);
+        MEM32(info) = 296;
+        MEM32(info + 4) = fx[i].guid;                              /* GUID_xxx {13541C2x-8E33-11D0-9AD0-00A0C9A06E35} */
+        *(uint16_t *)GPTR(info + 8) = 0x8E33;
+        *(uint16_t *)GPTR(info + 10) = 0x11D0;
+        memcpy(GPTR(info + 12), "\x9A\xD0\x00\xA0\xC9\xA0\x6E\x35", 8);
+        MEM32(info + 20) = fx[i].type;                             /* dwEffType */
+        MEM32(info + 24) = 0x1 | 0x4 | 0x200;                      /* static params: duration, gain, type-specific */
+        MEM32(info + 28) = 0x1 | 0x4 | 0x200;
+        snprintf(GPTR(info + 32), 260, "%s", fx[i].name);
+        uint32_t a[2] = {info, ARG(2)};
+        if (!guest_call(ARG(1), 2, a, 1)) break;
+    }
+    gfree(info);
+    return 0;
+}
 METHOD(dev_EnumCreatedEffectObjects, 4) { return 0; }
-METHOD(dev_SendForceFeedbackCommand, 2) { return 0; }
-METHOD(dev_GetForceFeedbackState, 2) { MEM32(ARG(1)) = 0; return 0; }
+METHOD(dev_SendForceFeedbackCommand, 2) {
+    switch (ARG(1)) {
+    case 0x01: case 0x10: ff_muted = 0; break;                     /* RESET, SETACTUATORSON */
+    case 0x02: case 0x20: rumble(0, 0); ff_muted = ARG(1) == 0x20; break;  /* STOPALL, SETACTUATORSOFF */
+    case 0x04: case 0x08: break;                                   /* PAUSE, CONTINUE */
+    }
+    return 0;
+}
+METHOD(dev_GetForceFeedbackState, 2) { MEM32(ARG(1)) = ff_muted ? 0x20 : 0x10; return 0; }
 METHOD(dev_Escape, 2) { return 0x80004001u; }
 METHOD(dev_GetDeviceData, 5) {
     static int logged;
@@ -280,7 +401,7 @@ static const ComEntry dev_vt[] = {
     {"IDirectInputDevice8::SetCooperativeLevel", dev_SetCooperativeLevel},
     {"IDirectInputDevice8::GetObjectInfo", NULL}, {"IDirectInputDevice8::GetDeviceInfo", dev_GetDeviceInfo},
     {"IDirectInputDevice8::RunControlPanel", NULL}, {"IDirectInputDevice8::Initialize", NULL},
-    {"IDirectInputDevice8::CreateEffect", NULL}, {"IDirectInputDevice8::EnumEffects", dev_EnumEffects},
+    {"IDirectInputDevice8::CreateEffect", dev_CreateEffect},{"IDirectInputDevice8::EnumEffects", dev_EnumEffects},
     {"IDirectInputDevice8::GetEffectInfo", NULL}, {"IDirectInputDevice8::GetForceFeedbackState", dev_GetForceFeedbackState},
     {"IDirectInputDevice8::SendForceFeedbackCommand", dev_SendForceFeedbackCommand},
     {"IDirectInputDevice8::EnumCreatedEffectObjects", dev_EnumCreatedEffectObjects},
@@ -306,10 +427,10 @@ METHOD(di_CreateDevice, 4) {
     return 0;
 }
 /* Offers the gamepad to a game-controller enumeration: BOOL CALLBACK cb(const DIDEVICEINSTANCEA *, void *).
- * Not to one asking for DIEDFL_FORCEFEEDBACK: the game would then drive a vibration effect it never got. */
+ * Force-feedback enumerations included: its effects rumble the pad (dev_CreateEffect). */
 METHOD(di_EnumDevices, 5) {
     uint32_t type = ARG(1) & 0xFF;
-    if ((type == 0 || type == 4 || type == 0x14 || type == 0x15) && !(ARG(4) & 0x100) && get_pad()) {
+    if ((type == 0 || type == 4 || type == 0x14 || type == 0x15) && get_pad()) {
         uint32_t di = galloc(580), a[2] = {di, ARG(3)};
         fill_instance(di, DEV_PAD);
         guest_call(ARG(2), 2, a, 1);

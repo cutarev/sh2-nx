@@ -249,6 +249,32 @@ static void readback(Res *s) {
     glBindFramebuffer(GL_FRAMEBUFFER, dev->fbo);
 }
 
+/* The last presented frame. Direct3D's front buffer is what was last shown, not the back buffer the game has
+ * already cleared for the next frame; the game uses it for the transition cross-fades and the save thumbnail. */
+static GLuint front_tex, front_fbo;
+static uint32_t front_w, front_h;
+
+void res_snapshot_front(void) {  /* called by Present with the back buffer bound for reading */
+    Res *bb = res_of(dev->backbuffer);
+    if (!bb) return;
+    if (!front_tex || front_w != bb->w || front_h != bb->h) {
+        if (front_tex) { glDeleteTextures(1, &front_tex); glDeleteFramebuffers(1, &front_fbo); }
+        front_w = bb->w;
+        front_h = bb->h;
+        glGenTextures(1, &front_tex);
+        glBindTexture(GL_TEXTURE_2D, front_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, front_w, front_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glGenFramebuffers(1, &front_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, front_fbo);
+        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, front_tex, 0);
+    }
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, front_fbo);
+    glBlitFramebuffer(0, 0, front_w, front_h, 0, 0, front_w, front_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+}
+
 /* GetFrontBuffer: the last presented image into an A8R8G8B8 image surface. */
 uint32_t res_read_front(uint32_t dst_o) {
     Res *src = res_of(dev->backbuffer), *dst = res_of(dst_o);
@@ -256,11 +282,23 @@ uint32_t res_read_front(uint32_t dst_o) {
     GLuint fb;
     glGenFramebuffers(1, &fb);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fb);
-    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, surface_tex(src), 0);
+    /* the presented frame when there is one, else the back buffer */
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                           front_tex && front_w == src->w && front_h == src->h ? front_tex : surface_tex(src), 0);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glPixelStorei(GL_PACK_ROW_LENGTH, dst->pitch / 4);
+    GLenum fbst = glCheckFramebufferStatus(GL_READ_FRAMEBUFFER);
     glReadPixels(0, 0, src->w < dst->w ? src->w : dst->w, src->h < dst->h ? src->h : dst->h, GL_BGRA,
                  GL_UNSIGNED_BYTE, GPTR(dst->mem));
+    {   /* debugging: what the capture holds (grey transitions / thumbnails) */
+        const uint8_t *px = GPTR(dst->mem);
+        uint64_t sum[3] = {0, 0, 0};
+        uint32_t n = 0;
+        for (uint32_t i = 0; i + 3 < dst->size; i += 4 * 97) { sum[0] += px[i]; sum[1] += px[i + 1]; sum[2] += px[i + 2]; n++; }
+        rt_log("front buffer: src %ux%u fmt %u dst %ux%u pitch %u fb %04X avg B%u G%u R%u first %02X%02X%02X",
+               src->w, src->h, src->fmt, dst->w, dst->h, dst->pitch, fbst,
+               n ? (unsigned)(sum[0] / n) : 0, n ? (unsigned)(sum[1] / n) : 0, n ? (unsigned)(sum[2] / n) : 0, px[0], px[1], px[2]);
+    }
     glPixelStorei(GL_PACK_ROW_LENGTH, 0);
     glDeleteFramebuffers(1, &fb);
     for (uint32_t i = 0; i < dst->size; i += 4) *(uint8_t *)GPTR(dst->mem + i + 3) = 0xFF;

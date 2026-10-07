@@ -67,9 +67,10 @@ def test_loop_head_inherits_flags_from_both_predecessors():
     assert "CMP_EQ" in code or "== 0" in code, code
 
 
-def test_disagreeing_predecessors_keep_the_fallback():
+def test_disagreeing_predecessors_read_the_zero_snapshot():
     # Two predecessors reach the jz: one after `sub`, one after `inc`, whose
-    # flags come from a different operand. The join must refuse.
+    # flags come from a different operand. Both publish ZF into _zr, so the jz
+    # reads whichever one ran -- the x86 semantics -- instead of the fallback.
     #   +0  sub eax, ecx
     #   +2  jmp +3            -> the jz at +5
     #   +4  inc edx           (falls through to the jz, different flag source)
@@ -81,10 +82,11 @@ def test_disagreeing_predecessors_keep_the_fallback():
              b"\x74\x00"          # jz +0 -> +7
              b"\xC3")             # ret
     code = _translate(image)
-    assert "_flags /*" in code, code
+    assert "_flags /*" not in code, code
+    assert "(_zr == 0)" in code, code
 
 
 if __name__ == "__main__":
     test_loop_head_inherits_flags_from_both_predecessors()
-    test_disagreeing_predecessors_keep_the_fallback()
+    test_disagreeing_predecessors_read_the_zero_snapshot()
     print("ok")

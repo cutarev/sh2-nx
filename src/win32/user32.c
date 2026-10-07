@@ -26,10 +26,11 @@ WINAPI(CreateWindowExA, "CreateWindowExA", 12) {
         SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");  /* let SIGTERM/SIGINT stop the port */
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER | SDL_INIT_TIMER))
             rt_fatal("SDL_Init: %s", SDL_GetError());
-        /* A scripted run (SH2_KEYS) stays off screen: it neither reads nor steals the real keyboard. */
+        /* A scripted run (SH2_KEYS) stays off screen, unless SH2_SHOW is set to watch it: either way it
+         * never reads the real keyboard. */
         rt_window = SDL_CreateWindow("Silent Hill 2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720,
                                      SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE |
-                                         (getenv("SH2_KEYS") ? SDL_WINDOW_HIDDEN : 0));
+                                         (getenv("SH2_KEYS") && !getenv("SH2_SHOW") ? SDL_WINDOW_HIDDEN : 0));
         if (!rt_window) rt_fatal("SDL_CreateWindow: %s", SDL_GetError());
     }
     return HWND_MAIN;

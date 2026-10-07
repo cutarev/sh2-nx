@@ -388,6 +388,10 @@ ZF_FROM_DEST = frozenset({
     "adc", "sbb", "shl", "shr", "sar",
 })
 
+# Setters that publish ZF into _zr (zero exactly when ZF is set): cmp/test from their snapshot, the
+# ALU ops through _result_snapshot, inc/dec. A join of any mix of them answers je/jne exactly.
+ZR_SETTERS = frozenset({"cmp", "cmp~", "add", "sub", "and", "or", "xor", "inc", "dec"})
+
 # Additional instructions that modify EFLAGS (tracked but handled as generic)
 _EFLAGS_SETTERS = frozenset({
     "shld", "shrd", "rol", "ror", "rcl", "rcr",  # Shifts/rotates set CF
@@ -439,7 +443,10 @@ _EFLAGS_PRESERVE = frozenset({
     # pushfd READS the flags and leaves them alone, so it belongs here.
     # popfd does NOT -- see _FLAGS_UNDEFINED.
     "pushfd", "pushal", "popal", "cpuid",
-    "sgdt", "ljmp", "sfence",
+    "sgdt", "ljmp", "sfence", "lfence", "mfence",
+    # Cache hints write no flags. SH2's memcpy issues four of them between its
+    # `cmp ebx, edx` and the `jae`, which used to drop the comparison.
+    "prefetch", "prefetchw", "prefetchnta", "prefetcht0", "prefetcht1", "prefetcht2",
     # SSE scalar float
     "movss", "movsd",
     "addss", "subss", "mulss", "divss",
@@ -535,6 +542,16 @@ def _make_condition(jcc, flag_setter, flag_ops):
     # Only ZF is answerable from it. dec does not write CF, so a jb after the
     # same join would be reading a flag one predecessor never set; returning
     # None there leaves the existing fallback in place.
+    # A join of cmp/test and arithmetic setters (an MSVC switch chain: `cmp eax, K; jmp join` on some
+    # edges, `sub eax, K; jmp join` on others, `join: je case`). Every one of them published ZF into
+    # _zr, so je/jne read that whichever edge arrived.
+    if flag_setter == "__zr":
+        if jcc in ("je", "jz"):
+            return "(_zr == 0)", desc
+        if jcc in ("jne", "jnz"):
+            return "(_zr != 0)", desc
+        return None
+
     if flag_setter == "__zf_from_dest" and flag_ops:
         dest = _fmt_operand_read(flag_ops[0])
         if jcc in ("je", "jz"):
@@ -1949,7 +1966,7 @@ class Lifter:
                     f" /* {m} source, before the write */")
         dst = _fmt_operand_read(ops[0])
         return (f"_fa = (uint32_t)({dst}) & {mask};"
-                f" _fas = (int32_t){sx}(_fa); /* {m} result */")
+                f" _fas = (int32_t){sx}(_fa); _zr = _fa; /* {m} result */")
 
     def _lift_alu_binop(self, insn, ops, m):
         if len(ops) < 2:
@@ -1995,7 +2012,7 @@ class Lifter:
         size = _operand_width(ops[0]) or 4
         mask, sx = self._SNAP_MASK[size], self._SNAP_SX[size]
         overflow_result = (1 << (size * 8 - 1)) - (m == "dec")
-        out += [f"_fa = (uint32_t)({val}) & {mask};",
+        out += [f"_fa = (uint32_t)({val}) & {mask}; _zr = _fa;",
                 f"_fas = (int32_t){sx}(_fa); _fb = (_fa == 0x{overflow_result:X}u); /* {m} result/SF/OF; CF unchanged */"]
         return out
 
@@ -2311,6 +2328,10 @@ class Lifter:
             f"_fas = (int32_t){sx}(_fa); _fbs = (int32_t){sx}(_fb);"
             f" /* {kind} {lhs}, {rhs} ({size*8}-bit) */",
         ]
+        if kind == "cmp":
+            # ZF as a single value (see ZR_SETTERS): zero exactly when the compare found equality.
+            # A test reaches here as cmp (A & B), 0 (normalise_zero_test), so it is covered too.
+            out.append("_zr = _fa ^ _fb; /* ZF snapshot */")
         # A cmp sets the carry flag too, and sbb/adc/setc/rcl read it directly
         # rather than through _fa/_fb. Leaving CF alone here let those pick up
         # whatever an earlier instruction had left in it.

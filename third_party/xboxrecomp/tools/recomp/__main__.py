@@ -489,6 +489,8 @@ def main():
             chunk_size=args.split,
             verbose=args.verbose,
             manual=manual,
+            wrapped=(manual_scan_result[1] & set(translator.func_db))
+                    if args.exclude_manual else None,
         )
 
         t_translate = time.time() - t0

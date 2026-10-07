@@ -3,6 +3,7 @@
 #include "d3d8.h"
 #include <stdarg.h>
 #include <math.h>
+#include <SDL2/SDL.h>
 
 /* ---- string builder ---- */
 typedef struct { char *s; size_t n, cap; } Str;
@@ -20,8 +21,14 @@ static void sp(Str *b, const char *fmt, ...) {
 }
 
 /* ---- shader objects created by the game ---- */
-typedef struct { int used; char *glsl; VsInput in[16]; float consts[96][4]; uint8_t const_set[96]; int has_func; } VShader;
-typedef struct { int used; char *glsl; } PShader;
+typedef struct { int used; char *glsl; VsInput in[16]; float consts[96][4]; uint8_t const_set[96]; int has_func; uint32_t hash; } VShader;
+typedef struct { int used; char *glsl; uint32_t hash; } PShader;
+static uint32_t glsl_hash(const char *s) {
+    uint32_t h = 2166136261u;
+    for (; s && *s; s++) h = (h ^ (uint8_t)*s) * 16777619u;
+    return h ? h : 1;
+}
+static void progcache_shader_created(void);
 static VShader vshaders[1024];
 static PShader pshaders[256];
 #define VS_BASE 0xF0000001u  /* handles above every FVF code */
@@ -241,6 +248,8 @@ uint32_t shader_create_vs(uint32_t decl, uint32_t func) {
             parse_decl(v, decl);
             v->has_func = func != 0;
             if (func) v->glsl = translate_vs(func);
+            v->hash = func ? glsl_hash(v->glsl) : 0;
+            progcache_shader_created();
             return VS_BASE + i;
         }
     rt_fatal("too many vertex shaders");
@@ -290,7 +299,9 @@ static char *translate_ps(uint32_t func) {
 uint32_t shader_create_ps(uint32_t func) {
     for (int i = 1; i < 256; i++)
         if (!pshaders[i].used) {
-            pshaders[i] = (PShader){1, translate_ps(func)};
+            pshaders[i] = (PShader){1, translate_ps(func), 0};
+            pshaders[i].hash = glsl_hash(pshaders[i].glsl);
+            progcache_shader_created();
             return i;
         }
     rt_fatal("too many pixel shaders");
@@ -573,6 +584,116 @@ static Prog *build(const Key *k) {
     return p;
 }
 
+/* ---- persistent program cache ----
+ * Programs are built the first time a state combination is drawn, which stalls that frame (the
+ * "stutter when areas or shaders load"). Every key built is appended to sh2-progs.bin, with the
+ * game's shaders named by a hash of their GLSL rather than by handle, and the next run builds them
+ * up front: fixed-function ones before the first draw, shader ones as soon as the game has created
+ * the shaders they need (handles differ between runs, hashes do not). */
+typedef struct { Key key; uint32_t vsh, psh; } ProgRec;
+#define PROGCACHE_FILE "sh2-progs.bin"
+#define PROGCACHE_MAGIC 0x53483250u  /* "SH2P" */
+static ProgRec *recs;
+static size_t nrecs, caprecs, npending;
+static uint8_t *rec_done;
+static int warm, cache_bad, shaders_changed;
+
+static uint32_t vs_handle_of(uint32_t hash) {
+    for (int i = 0; i < 1024; i++) if (vshaders[i].used && vshaders[i].hash == hash) return VS_BASE + i;
+    return 0;
+}
+static uint32_t ps_handle_of(uint32_t hash) {
+    for (int i = 1; i < 256; i++) if (pshaders[i].used && pshaders[i].hash == hash) return i;
+    return 0;
+}
+
+static Prog *prog_get(const Key *k, int record);
+
+static void rec_add(const ProgRec *r) {
+    if (nrecs == caprecs) {
+        caprecs = caprecs ? caprecs * 2 : 256;
+        recs = realloc(recs, caprecs * sizeof *recs);
+        rec_done = realloc(rec_done, caprecs);
+    }
+    recs[nrecs] = *r;
+    rec_done[nrecs++] = 0;
+}
+
+/* Builds every cached record whose shaders now exist. */
+static void progcache_build_ready(void) {
+    if (!npending) return;
+    for (size_t i = 0; i < nrecs; i++) {
+        if (rec_done[i]) continue;
+        Key k = recs[i].key;
+        if (recs[i].vsh && !(k.vs = vs_handle_of(recs[i].vsh))) continue;
+        if (recs[i].psh && !(k.ps = ps_handle_of(recs[i].psh))) continue;
+        rec_done[i] = 1;
+        npending--;
+        prog_get(&k, 0);
+    }
+}
+
+static void progcache_warmup(void) {
+    if (warm) {
+        if (shaders_changed) { shaders_changed = 0; progcache_build_ready(); }
+        return;
+    }
+    warm = 1;
+    shaders_changed = 0;
+    FILE *f = fopen(PROGCACHE_FILE, "rb");
+    if (!f) return;
+    uint32_t hdr[2];
+    if (fread(hdr, 4, 2, f) != 2 || hdr[0] != PROGCACHE_MAGIC || hdr[1] != sizeof(ProgRec)) {
+        fclose(f);
+        cache_bad = 1;  /* another build's layout: start over */
+        return;
+    }
+    ProgRec r;
+    while (fread(&r, sizeof r, 1, f) == 1) { rec_add(&r); npending++; }
+    fclose(f);
+    Uint64 t0 = SDL_GetTicks64();
+    progcache_build_ready();
+    rt_log("program cache: %zu records, %zu built up front in %llu ms", nrecs, nrecs - npending,
+           (unsigned long long)(SDL_GetTicks64() - t0));
+}
+
+/* The game may create shaders from a loading thread with no GL context, so the build waits for the
+ * next draw. */
+
+static void progcache_shader_created(void) { shaders_changed = 1; }
+
+static void progcache_append(const Key *k) {
+    ProgRec r = {*k, 0, 0};
+    if (k->vs) { VShader *v = vs_of(k->vs); r.vsh = v ? v->hash : 0; r.key.vs = 0; }
+    if (k->ps) { PShader *p = ps_of(k->ps); r.psh = p ? p->hash : 0; r.key.ps = 0; }
+    for (size_t i = 0; i < nrecs; i++)
+        if (recs[i].vsh == r.vsh && recs[i].psh == r.psh && !memcmp(&recs[i].key, &r.key, sizeof r.key)) return;
+    rec_add(&r);
+    rec_done[nrecs - 1] = 1;
+    FILE *f = fopen(PROGCACHE_FILE, cache_bad ? "wb" : "ab");
+    if (!f) return;
+    if (cache_bad || ftell(f) == 0) {
+        uint32_t hdr[2] = {PROGCACHE_MAGIC, sizeof(ProgRec)};
+        fwrite(hdr, 4, 2, f);
+        cache_bad = 0;
+    }
+    fwrite(&r, sizeof r, 1, f);
+    fclose(f);
+}
+
+static Prog *prog_get(const Key *k, int record) {
+    uint32_t h = key_hash(k);
+    Prog *p = progs[h & 4095];
+    while (p && memcmp(&p->key, k, sizeof *k)) p = p->next;
+    if (!p) {
+        p = build(k);
+        p->next = progs[h & 4095];
+        progs[h & 4095] = p;
+        if (record) progcache_append(k);
+    }
+    return p;
+}
+
 /* ---- per-draw ---- */
 
 static void mat_mul(float *r, const float *a, const float *b) {  /* r = a * b, D3D row-major */
@@ -652,14 +773,8 @@ void shader_bind_for_draw(int rhw, uint32_t vs, const int *present) {
     k.fogenable = rs[28];
     k.fogtable = rs[28] ? rs[35] : 0;
 
-    uint32_t h = key_hash(&k);
-    Prog *p = progs[h & 4095];
-    while (p && memcmp(&p->key, &k, sizeof k)) p = p->next;
-    if (!p) {
-        p = build(&k);
-        p->next = progs[h & 4095];
-        progs[h & 4095] = p;
-    }
+    progcache_warmup();
+    Prog *p = prog_get(&k, 1);
     glUseProgram(p->id);
 
     /* Uniforms */

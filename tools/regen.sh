@@ -9,7 +9,9 @@ mkdir -p "$B"
 [ -z "$TRACE" ] && [ -f "$B/trace.json" ] && TRACE="$B/trace.json"  # oracle targets (tools/oracle.py)
 cd "$ROOT"
 if [ "$1" != --recomp-only ]; then
-"$PY" tools/pe2xbe.py game/sh2pc.exe "$B/sh2pc.xbe" --imports "$B/imports.json"
+# Enhanced Edition code patches (tools/patch_exe.py), then the PE as an XBE for the pipeline.
+"$PY" tools/patch_exe.py game/sh2pc.exe "$B/sh2pc_ee.exe"
+"$PY" tools/pe2xbe.py "$B/sh2pc_ee.exe" "$B/sh2pc.xbe" --imports "$B/imports.json"
 cd "$X"
 "$PY" -m tools.xbe_parser "$B/sh2pc.xbe" --json "$B/sh2pc_analysis.json" --quiet
 # Pass 1 finds the code; its immediates and data pointers seed the functions only data refers to.
@@ -23,5 +25,6 @@ else cd "$X"; fi
 # 0x570124 / 0x57011E: jmp thunks to MSVCR70 _setjmp3 / longjmp (libpng error handling uses them).
 "$PY" -m tools.recomp "$B/sh2pc.xbe" --all --split 250 --game-name sh2 --gen-dir "$ROOT/src/recomp/gen" \
     --setjmp 0x570124 --longjmp 0x57011E ${TRACE:+--trace-functions "$TRACE"} \
+    --exclude-manual "$ROOT/src/game/ee.c" \
     --disasm-dir "$B/disasm" --func-id-dir "$B/func_id" --abi-dir "$B/abi" -o "$B/recomp" > "$B/recomp.log" 2>&1
 grep -E "functions \(|unresolved call targets" "$B/recomp.log"

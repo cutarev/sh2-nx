@@ -126,7 +126,7 @@ uint32_t galloc(uint32_t size) {
     while ((1ull << cls) < (uint64_t)size + sizeof(BlockHdr)) cls++;
     pthread_mutex_lock(&heap_mx);
     uint32_t blk = free_head[cls];
-    if (blk) free_head[cls] = MEM32(blk + sizeof(BlockHdr));
+    if (blk) free_head[cls] = ((BlockHdr *)GPTR(blk))->pad;  /* the free list links through the header */
     else {
         if ((uint64_t)heap_top + (1ull << cls) > HEAP_HI) rt_fatal("guest heap exhausted (%u bytes)", size);
         blk = heap_top;
@@ -150,13 +150,39 @@ static BlockHdr *hdr(uint32_t va) {
     return h;
 }
 
+/* Freed blocks wait in a quarantine before they are reused, and their contents stay intact: the game
+ * (written for Windows' heap, which does not hand a block back at once) still reads a block just after
+ * freeing it, and an immediate LIFO reuse turned that into a crash at some resolutions (the screen-sized
+ * image surface and the Konami logo texture share a size class at 1280x720). */
+#define QUARANTINE_BYTES (64u << 20)
+#define QUARANTINE_SLOTS 4096
+static uint32_t quarantine[QUARANTINE_SLOTS], q_head, q_count, q_bytes;
+
+static void release_block(uint32_t blk) {
+    BlockHdr *h = GPTR(blk);
+    h->pad = free_head[h->cls];
+    free_head[h->cls] = blk;
+}
+
 void gfree(uint32_t va) {
     if (!va) return;
     BlockHdr *h = hdr(va);
     pthread_mutex_lock(&heap_mx);
-    MEM32(va) = free_head[h->cls];
-    free_head[h->cls] = va - sizeof(BlockHdr);
     h->magic = 0;
+    if (q_count == QUARANTINE_SLOTS || q_bytes + (1u << h->cls) > QUARANTINE_BYTES) {
+        while (q_count && (q_count == QUARANTINE_SLOTS || q_bytes + (1u << h->cls) > QUARANTINE_BYTES)) {
+            uint32_t old = quarantine[q_head];
+            q_head = (q_head + 1) % QUARANTINE_SLOTS;
+            q_count--;
+            q_bytes -= 1u << ((BlockHdr *)GPTR(old))->cls;
+            release_block(old);
+        }
+    }
+    if (q_bytes + (1u << h->cls) > QUARANTINE_BYTES) release_block(va - sizeof(BlockHdr));  /* bigger than the quarantine */
+    else {
+        quarantine[(q_head + q_count++) % QUARANTINE_SLOTS] = va - sizeof(BlockHdr);
+        q_bytes += 1u << h->cls;
+    }
     pthread_mutex_unlock(&heap_mx);
 }
 
@@ -287,7 +313,9 @@ recomp_func_t recomp_lookup_kernel(uint32_t va) {
 }
 
 /* Hand-written replacements of game functions, by guest address. None yet. */
-recomp_func_t recomp_lookup_manual(uint32_t va) { (void)va; return NULL; }
+/* Hand-written functions and wrappers (src/game/ee.c): calls to them are routed here first. */
+recomp_func_t ee_lookup_manual(uint32_t va);
+recomp_func_t recomp_lookup_manual(uint32_t va) { return ee_lookup_manual(va); }
 
 recomp_func_t rt_resolve(uint32_t va) {
     recomp_func_t fn = recomp_lookup_manual(va);
@@ -426,6 +454,7 @@ static uint32_t load_exe(const char *path) {
 }
 
 extern void xbe_entry_point(void);
+void ee_init(void);  /* src/game/ee.c */
 
 /* The game runs on a thread of its own: lifted code recurses as deep as the guest and the main
  * thread's stack is not ours to size on every platform. */
@@ -456,6 +485,7 @@ int main(int argc, char **argv) {
     arena_init();
     recomp_dispatch_init();
     load_exe("sh2pc.exe");
+    ee_init();
     host_thread_start(game_thread, NULL, 16u << 20);
     for (;;) sleep(1000);
 }

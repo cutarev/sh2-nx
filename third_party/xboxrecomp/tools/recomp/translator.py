@@ -49,12 +49,10 @@ def _merge_flag_states(states):
             return ("cmp~", first[1])
     if first[0] in ("cmp", "test") and len(first[1]) == 2:
         width = _operand_width(first[1][0]) or _operand_width(first[1][1])
-        for kind, ops in states[1:]:
-            if kind != first[0] or len(ops) != 2:
-                return None
-            if (_operand_width(ops[0]) or _operand_width(ops[1])) != width:
-                return None
-        return first
+        if all(kind == first[0] and len(ops) == 2
+               and (_operand_width(ops[0]) or _operand_width(ops[1])) == width
+               for kind, ops in states[1:]):
+            return first
     return _merge_zero_flag(states)
 
 
@@ -74,19 +72,23 @@ def _merge_zero_flag(states):
     The marker is deliberately narrow: only ZF is answerable from it, and
     _make_condition refuses everything else.
     """
-    from .lifter import ZF_FROM_DEST
+    from .lifter import ZF_FROM_DEST, ZR_SETTERS
     dests = set()
     for setter, ops in states:
         if setter not in ZF_FROM_DEST or not ops:
-            return None
+            break
         op = ops[0]
         # disasm.Operand, not a capstone operand: .type is the string "reg".
         if getattr(op, "type", None) != "reg" or not op.reg:
-            return None
+            break
         dests.add(op.reg)
-    if len(dests) != 1:
-        return None
-    return ("__zf_from_dest", [states[0][1][0]])
+    else:
+        if len(dests) == 1:
+            return ("__zf_from_dest", [states[0][1][0]])
+    # Mixed cmp/test and arithmetic (MSVC switch chains): all of them published ZF into _zr.
+    if all(setter in ZR_SETTERS for setter, _ in states):
+        return ("__zr", [])
+    return None
 
 
 def _incoming_flag_state(sources, known, is_entry):
@@ -2147,9 +2149,9 @@ class FunctionTranslator:
                                  "lock cmpxchg", "inc", "dec")
                or insn.mnemonic in _RESULT_SNAPSHOT_SETTERS
                for insn in instructions):
-            lines.append("    uint32_t _fa = 0, _fb = 0;")
+            lines.append("    uint32_t _fa = 0, _fb = 0, _zr = 0;")
             lines.append("    int32_t _fas = 0, _fbs = 0;")
-            lines.append("    (void)_fa; (void)_fb; (void)_fas; (void)_fbs;")
+            lines.append("    (void)_fa; (void)_fb; (void)_fas; (void)_fbs; (void)_zr;")
             # Flag snapshot: a cmp/test that is not fused with its jcc records
             # its operands here, zero- and sign-extended to the compare's own
             # width, so the branch tests what the compare saw.
@@ -2709,7 +2711,8 @@ class BatchTranslator:
 
     def translate_batch_split(self, func_list, output_dir, chunk_size=1000,
                               header_name="recomp_funcs.h",
-                              prefix="recomp", verbose=False, manual=None):
+                              prefix="recomp", verbose=False, manual=None,
+                              wrapped=None):
         """
         Translate functions into multiple .c files + a shared header.
 
@@ -2739,7 +2742,10 @@ class BatchTranslator:
         # function routes through recomp_lookup_manual too. Without this
         # the override only took effect through a function pointer, and
         # every direct caller silently reached the generated body.
-        self.translator.lifter.manual_functions = manual
+        # wrapped: functions the project wraps (its sub_X calls the body,
+        # emitted as sub_X_gen). Their bodies are generated, but calls must
+        # still reach the wrapper, so they route through the manual lookup.
+        self.translator.lifter.manual_functions = manual | set(wrapped or ())
         manual_decls = {}
 
         # Translate all functions first, collecting results

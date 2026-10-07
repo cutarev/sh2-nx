@@ -31,7 +31,52 @@ static int match_ci(const char *dir, const char *name, char *out, size_t n) {
     return found;
 }
 
+/* Enhanced Edition mod folder (EE Common/FileSystemHooks.cpp): data/X is read from sh2e/X when that
+ * file exists. Each top-level folder is switched on separately in sh2e.ini ("pic=1", "movie=1", ...),
+ * because some EE packs only work with EE patches the port does not have yet. */
+static int hd_maps;  /* hdmaps=1 in sh2e.ini: use the HD map pages (they need EE's map scaling, not ported) */
+static int sh2e_enabled(const char *rel) {  /* rel: path after "data/" */
+    static char on[32][16];
+    static int n_on = -1;
+    if (n_on < 0) {
+        n_on = 0;
+        FILE *f = fopen("sh2e.ini", "r");
+        char line[128], key[16];
+        int v;
+        while (f && fgets(line, sizeof line, f))
+            if (sscanf(line, " %15[^= ] = %d", key, &v) == 2 && !strcmp(key, "hdmaps")) hd_maps = v;
+            else if (sscanf(line, " %15[^= ] = %d", key, &v) == 2 && v && n_on < 32) snprintf(on[n_on++], 16, "%s", key);
+        if (f) fclose(f);
+        if (n_on) rt_log("sh2e: %d mod folders enabled", n_on);
+    }
+    /* The title and save screens always take the Enhanced Edition's pictures: tools/patch_exe.py lays
+     * them out for that 2732x2048 art, and the original pictures come out misplaced. */
+    if (!strncasecmp(rel, "pic/etc/start0", 14) || !strncasecmp(rel, "menu/mc/savebg", 14)) return 1;
+    size_t cl = strcspn(rel, "/");
+    for (int i = 0; i < n_on; i++)
+        if (strlen(on[i]) == cl && !strncasecmp(on[i], rel, cl)) return 1;
+    return 0;
+}
+
+static const char *rt_path_base(const char *guest, char *out, size_t n);
+
 const char *rt_path(const char *guest, char *out, size_t n) {
+    const char *r = rt_path_base(guest, out, n);
+    int map_page = !strncasecmp(r, "data/pic/map/", 13) || !strncasecmp(r, "data/pic/add/map", 16);
+    if (!strncasecmp(r, "data/", 5) && sh2e_enabled(r + 5) && (hd_maps || !map_page)) {
+        char alt[512], res[512];
+        struct stat st;
+        snprintf(alt, sizeof alt, "sh2e/%s", r + 5);
+        rt_path_base(alt, res, sizeof res);
+        if (stat(res, &st) == 0 && S_ISREG(st.st_mode)) {
+            if (rt_trace) rt_log("  sh2e: %s", res);
+            snprintf(out, n, "%s", res);
+        }
+    }
+    return out;
+}
+
+static const char *rt_path_base(const char *guest, char *out, size_t n) {
     char tmp[512];
     snprintf(tmp, sizeof tmp, "%s", guest);
     for (char *c = tmp; *c; c++) if (*c == '\\') *c = '/';
@@ -453,9 +498,16 @@ WINAPI(FileTimeToSystemTime, "FileTimeToSystemTime", 2) {
     put_systemtime(ARG(1), (time_t)((t - 116444736000000000ull) / 10000000), (t / 10000) % 1000);
     return 1;
 }
+/* The game stamps a save with the local time (GetLocalTime) and compares it with the file's time after this
+ * conversion, so the console's UTC offset has to be applied here. */
 WINAPI(FileTimeToLocalFileTime, "FileTimeToLocalFileTime", 2) {
-    MEM32(ARG(1)) = MEM32(ARG(0));
-    MEM32(ARG(1) + 4) = MEM32(ARG(0) + 4);
+    uint64_t t = MEM32(ARG(0)) | (uint64_t)MEM32(ARG(0) + 4) << 32;
+    time_t utc = (time_t)((t - 116444736000000000ull) / 10000000);
+    struct tm tm;
+    localtime_r(&utc, &tm);
+    t += (uint64_t)((int64_t)(utc_seconds(&tm) - utc) * 10000000);
+    MEM32(ARG(1)) = (uint32_t)t;
+    MEM32(ARG(1) + 4) = (uint32_t)(t >> 32);
     return 1;
 }
 WINAPI(SystemTimeToFileTime, "SystemTimeToFileTime", 2) {
@@ -534,6 +586,15 @@ WINAPI(timeKillEvent, "timeKillEvent", 1) {
 
 /* ---- files ---- */
 
+void ee_file_opened(const char *guest, FILE *f);  /* src/game/ee.c */
+
+/* Save folder activity is always logged (sh2.log), so a damaged-save report can be read afterwards. */
+static int has_save(const char *s) {
+    for (; *s; s++)
+        if (!strncasecmp(s, "save", 4)) return 1;
+    return 0;
+}
+
 static uint32_t open_file(const char *guest, uint32_t access, uint32_t disposition) {
     char path[512];
     rt_path(guest, path, sizeof path);
@@ -550,7 +611,9 @@ static uint32_t open_file(const char *guest, uint32_t access, uint32_t dispositi
     if (exists && S_ISDIR(st.st_mode)) { last_error = 5; return INVALID_HANDLE; }
     FILE *f = fopen(path, mode);
     if (rt_trace) rt_log("  open %s -> %s %s", guest, path, f ? "ok" : "FAILED");
+    if (has_save(guest)) rt_log("save: open %s access %08X disposition %u -> %s", guest, access, disposition, f ? "ok" : "FAILED");
     if (!f) { last_error = ERROR_FILE_NOT_FOUND; return INVALID_HANDLE; }
+    if (!write) ee_file_opened(guest, f);
     uint32_t h = new_handle(H_FILE);
     obj(h)->f = f;
     return h;
@@ -570,7 +633,29 @@ static uint32_t file_io(int write) {
     uint32_t ov = ARG(4);
     if (!o || !o->f) { last_error = 6; return 0; }
     if (ov) fseeko(o->f, MEM32(ov + 8) | (off_t)MEM32(ov + 12) << 32, SEEK_SET);
-    size_t n = write ? fwrite(GPTR(ARG(1)), 1, ARG(2), o->f) : fread(GPTR(ARG(1)), 1, ARG(2), o->f);
+    off_t at = ftello(o->f);
+    size_t n;
+    if (write) n = fwrite(GPTR(ARG(1)), 1, ARG(2), o->f);
+    else {
+        /* Never ask fread for more than the file holds: at the end of the file the C library zeroed the front of
+         * the destination buffer, and the game reads a save a second time at EOF (expecting 0 bytes and its
+         * buffer untouched), which turned every save into "damaged folders". */
+        fseeko(o->f, 0, SEEK_END);
+        off_t end = ftello(o->f);
+        fseeko(o->f, at, SEEK_SET);
+        size_t want = ARG(2);
+        if (at >= end) want = 0;
+        else if ((uint64_t)(end - at) < want) want = (size_t)(end - at);
+        n = want ? fread(GPTR(ARG(1)), 1, want, o->f) : 0;
+    }
+    if (ARG(2) >= 0x400 && ARG(2) <= 0x4800 && ARG(2) % 0x400 == 0)  /* save files */
+        rt_log("save: %s handle %X buf %08X size %u at %lld -> %u%s", write ? "WriteFile" : "ReadFile", ARG(0), ARG(1), ARG(2), (long long)at, (unsigned)n, ov ? " overlapped" : "");
+    if (!write && ARG(1) == 0x00933608u && ARG(2) == 0xC00) {
+        const uint8_t *b = GPTR(0x00933608u);
+        int lead = 0;
+        while (lead < 0xC00 && !b[lead]) lead++;
+        rt_log("save:   after read: first bytes %02X%02X%02X%02X, leading zeros %d", b[0], b[1], b[2], b[3], lead);
+    }
     if (write) fflush(o->f);
     if (ARG(3)) MEM32(ARG(3)) = (uint32_t)n;
     if (ov) {
@@ -661,9 +746,14 @@ static int wildmatch(const char *p, const char *s) {
 }
 
 /* WIN32_FIND_DATAA: attributes @0, size @28/@32, cFileName @44. */
-static void find_entry(uint32_t fd, const char *name, int dir, uint64_t size) {
+static void find_entry(uint32_t fd, const char *name, int dir, uint64_t size, time_t mtime) {
     memset(GPTR(fd), 0, 320);
     MEM32(fd) = dir ? 0x10 : 0x80;
+    uint64_t ft = ((uint64_t)mtime + 11644473600ull) * 10000000ull;  /* creation, access, write: the file's mtime */
+    for (int i = 0; i < 3; i++) {
+        MEM32(fd + 4 + 8 * i) = (uint32_t)ft;
+        MEM32(fd + 8 + 8 * i) = (uint32_t)(ft >> 32);
+    }
     MEM32(fd + 28) = (uint32_t)(size >> 32);
     MEM32(fd + 32) = (uint32_t)size;
     snprintf((char *)GPTR(fd + 44), 260, "%s", name);
@@ -675,7 +765,7 @@ static void find_entry(uint32_t fd, const char *name, int dir, uint64_t size) {
 static int find_fill(Obj *o, uint32_t fd) {
     while (o->dir && o->dots < 2) {
         const char *dot = o->dots++ ? ".." : ".";
-        if (wildmatch(o->pattern, dot)) { find_entry(fd, dot, 1, 0); return 1; }
+        if (wildmatch(o->pattern, dot)) { find_entry(fd, dot, 1, 0, time(NULL)); return 1; }
     }
     struct dirent *e;
     while (o->dir && (e = readdir(o->dir))) {
@@ -683,8 +773,10 @@ static int find_fill(Obj *o, uint32_t fd) {
         char p[1024];
         struct stat st;
         snprintf(p, sizeof p, "%s/%s", o->dirpath, e->d_name);
-        if (stat(p, &st)) continue;
-        find_entry(fd, e->d_name, S_ISDIR(st.st_mode), (uint64_t)st.st_size);
+        if (stat(rt_path(p, p, sizeof p), &st)) continue;  /* the size of what opening it reads (EE music) */
+        find_entry(fd, e->d_name, S_ISDIR(st.st_mode), (uint64_t)st.st_size, st.st_mtime);
+        if (has_save(o->dirpath)) rt_log("save: find %s [%s] -> %s%s %lld", o->dirpath, o->pattern, e->d_name, S_ISDIR(st.st_mode) ? "/" : "", (long long)st.st_size);
+        if (rt_trace) rt_log("  find %s [%s] -> %s%s %lld mtime %lld", o->dirpath, o->pattern, e->d_name, S_ISDIR(st.st_mode) ? "/" : "", (long long)st.st_size, (long long)st.st_mtime);
         return 1;
     }
     last_error = ERROR_NO_MORE_FILES;
@@ -706,6 +798,7 @@ WINAPI(FindFirstFileA, "FindFirstFileA", 2) {
     }
     if (!strcmp(o->pattern, "*.*")) strcpy(o->pattern, "*");
     o->dir = opendir(o->dirpath);
+    if (rt_trace) rt_log("  FindFirstFile %s [%s] %s", o->dirpath, o->pattern, o->dir ? "" : "(no such folder)");
     if (find_fill(o, ARG(1))) return h;
     close_handle(h);
     last_error = ERROR_FILE_NOT_FOUND;

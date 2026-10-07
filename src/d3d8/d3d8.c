@@ -10,11 +10,15 @@ static uint32_t u32(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
 
 /* ---- IDirect3D8 ---- */
 
-static const uint32_t modes[][2] = {{640, 480}, {800, 600}, {1024, 768}, {1280, 720}, {1280, 960},
-                                    {1280, 1024}, {1600, 900}, {1920, 1080}};
+uint32_t ee_res_w, ee_res_h;  /* the resolution sh2e.ini asks for (ee.c): always offered as the last mode */
+static uint32_t modes[][2] = {{640, 480}, {800, 600}, {1024, 768}, {1280, 720}, {1280, 960},
+                                    {1280, 1024}, {1600, 900}, {1920, 1080}, {960, 720}, {1440, 1080}, {0, 0}};
+/* The last two are 4:3 at the Switch's 720p and 1080p heights; the game's resolution table (ee.c) can use them. */
 #define N_MODES (sizeof modes / sizeof *modes)
+static void sync_modes(void) { modes[N_MODES - 1][0] = ee_res_w; modes[N_MODES - 1][1] = ee_res_h; }
 
 static void put_mode(uint32_t m, int i, uint32_t fmt) {
+    sync_modes();
     MEM32(m) = modes[i][0];
     MEM32(m + 4) = modes[i][1];
     MEM32(m + 8) = 60;
@@ -73,7 +77,10 @@ static void fill_caps(uint32_t c) {
     v[10] = v[13] = 0xFF;         /* ZCmpCaps, AlphaCmpCaps */
     v[11] = v[12] = 0x1FFF;       /* Src/DestBlendCaps */
     v[14] = 0x8 | 0x200 | 0x4000 | 0x80000;
-    v[15] = 0x1 | 0x2 | 0x4 | 0x8 | 0x40 | 0x400 | 0x800 | 0x4000 | 0x8000 | 0x10000;     /* TextureCaps */
+    /* TextureCaps. No D3DPTEXTURECAPS_POW2 (0x2): GL takes any size, and with it the game rounds a
+     * texture up to a power of two (the Enhanced Edition's 2732x2048 title became 4096x2048 with the
+     * art misplaced). The modern GPUs EE runs on report no POW2 either. */
+    v[15] = 0x1 | 0x4 | 0x8 | 0x40 | 0x400 | 0x800 | 0x4000 | 0x8000 | 0x10000;
     v[16] = v[17] = v[18] = 0x0100 | 0x0200 | 0x0400 | 0x010000 | 0x020000 | 0x01000000 | 0x02000000;
     v[19] = v[20] = 0x1F;         /* TextureAddressCaps */
     v[21] = 0x1F;
@@ -279,7 +286,10 @@ METHOD(dev_SetCursorPosition, 4) { return 0; }
 METHOD(dev_ShowCursor, 2) { return 0; }
 METHOD(dev_Reset, 2) { device_reset(ARG(1)); return 0; }
 
+void ee_frame(void);  /* src/game/ee.c: per-frame Enhanced Edition logic */
+
 METHOD(dev_Present, 5) {
+    ee_frame();
     int ww, wh;
     SDL_GL_GetDrawableSize(rt_window, &ww, &wh);
     Res *bb = res_of(dev->backbuffer);
@@ -293,6 +303,7 @@ METHOD(dev_Present, 5) {
     float s = fminf((float)ww / bb->w, (float)wh / bb->h);
     int dw = bb->w * s, dh = bb->h * s, dx = (ww - dw) / 2, dy = (wh - dh) / 2;
     glBlitFramebuffer(0, 0, bb->w, bb->h, dx, dy + dh, dx + dw, dy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    res_snapshot_front();
     static int frame;
     rt_frame++;
     /* debugging: SH2_SHOT=dir writes frames 0-9, then every SH2_SHOT_EVERY-th (30), as PPM */
@@ -329,6 +340,8 @@ METHOD(dev_GetGammaRamp, 2) {
     return 0;
 }
 METHOD(dev_CreateTexture, 8) {
+    if (ARG(1) > 1024 || ARG(2) > 1024)
+        rt_log("CreateTexture %ux%u levels %u usage %X fmt %X pool %u", ARG(1), ARG(2), ARG(3), ARG(4), ARG(5), ARG(6));
     MEM32(ARG(7)) = res_texture(ARG(1), ARG(2), ARG(3), ARG(4), ARG(5), ARG(6), 0);
     return MEM32(ARG(7)) ? 0 : D3DERR_INVALIDCALL;
 }

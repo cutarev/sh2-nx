@@ -37,12 +37,22 @@ static void thread_entry(void *p) {
 /* Guest threads run at 0x3B, the one priority Horizon time-slices, spread over the three cores the
  * application gets: the game spins on Sleep(0) and on its own flags, and at any other priority a
  * spinning thread keeps its core from everything at or below it. */
+static int only_core = -1;
+
+/* The game's CRI audio engine races when its threads run in parallel (the "sound loops forever" bug the
+ * PC fix works around by pinning the game to one core): with a core given here, every guest thread,
+ * the calling one included, is confined to it. */
+void host_use_single_core(int core) {
+    only_core = core;
+    if (core >= 0) svcSetThreadCoreMask(CUR_THREAD_HANDLE, core, 1u << core);
+}
+
 HostThread *host_thread_start(void (*fn)(void *), void *arg, size_t stack) {
     static int next_core;
     HostThread *t = calloc(1, sizeof *t);
     t->fn = fn;
     t->arg = arg;
-    Result rc = threadCreate(&t->thr, thread_entry, t, NULL, stack, 0x3B, next_core++ % 3);
+    Result rc = threadCreate(&t->thr, thread_entry, t, NULL, stack, 0x3B, only_core >= 0 ? only_core : next_core++ % 3);
     if (R_FAILED(rc)) rt_fatal("threadCreate: %x", rc);
     threadStart(&t->thr);
     return t;
@@ -154,6 +164,8 @@ static void on_pause(int sig) {
 }
 
 static void alt_stack(void);
+void host_use_single_core(int core) { (void)core; }
+
 static void *thread_entry(void *p) {
     self = p;
     alt_stack();
