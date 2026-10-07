@@ -6,6 +6,7 @@
 #include "host.h"
 #ifdef __SWITCH__
 #include <switch.h>
+#include <netinet/in.h>  /* __nxlink_host */
 #endif
 
 /* ---- register file and runtime globals the generated code links against ---- */
@@ -31,7 +32,16 @@ volatile uint64_t g_icall_count;
 int rt_trace;
 char rt_game_dir[512] = ".";
 
+#ifdef __SWITCH__
+/* Off unless launched by nxlink or asked for with log=1 in sh2e.ini: writing sh2.log costs an SD card write
+ * per line (crashes still go to sh2-crash.log). */
+static int log_on;
+#endif
+
 void rt_log(const char *fmt, ...) {
+#ifdef __SWITCH__
+    if (!log_on) return;
+#endif
     va_list ap;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
@@ -470,13 +480,24 @@ int main(int argc, char **argv) {
 #ifdef __SWITCH__
     const char *dir = "sdmc:/switch/sh2-nx";
     (void)argc; (void)argv;
-    socketInitializeDefault();
-    if (nxlinkStdio() < 0) socketExit();  /* launched by nxlink: stdout/stderr go back to the PC */
+    if (__nxlink_host.s_addr) {  /* launched by nxlink: stdout/stderr and the log go back to the PC */
+        socketInitializeDefault();
+        if (nxlinkStdio() >= 0) log_on = 1;
+        else socketExit();
+    }
 #else
     const char *dir = argc > 1 ? argv[1] : getenv("SH2_DIR");
 #endif
     if (dir) snprintf(rt_game_dir, sizeof rt_game_dir, "%s", dir);
     if (chdir(rt_game_dir)) rt_fatal("cannot enter %s", rt_game_dir);
+#ifdef __SWITCH__
+    FILE *ini = fopen("sh2e.ini", "r");
+    char line[128];
+    int v;
+    while (ini && fgets(line, sizeof line, ini))
+        if (sscanf(line, " log = %d", &v) == 1) log_on = v;
+    if (ini) fclose(ini);
+#endif
     rt_trace = getenv("SH2_TRACE") != NULL;
     if (getenv("SH2_COVER")) cover_from = atoi(getenv("SH2_COVER"));
     if (getenv("SH2_ORACLE")) sscanf(getenv("SH2_ORACLE"), "%x,%u", &oracle_va, &oracle_nth);

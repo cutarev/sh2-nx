@@ -128,6 +128,7 @@ button is in the same place as on an Xbox pad with the Enhanced Edition. Remap t
 | `resolution=1280x720` | the default; `1920x1080` for docked play, `960x720` for the original 4:3 |
 | `hdmaps=1` | the HD map pages (their layout is off: EE's map scaling is not ported) |
 | `cores=1` | every game thread on one core, a fallback if the music ever loops again |
+| `log=1` | write `sh2.log` next to the NRO, for bug reports (off by default: it costs an SD card write per line). Crashes always go to `sh2-crash.log` |
 
 ## Building the NRO
 
@@ -173,7 +174,7 @@ build/linux/sh2 game
 | `SH2_SHOT=dir`, `SH2_SHOT_EVERY=n` | dump frames as PPM (`tools/ppm2png.py`) |
 | `SH2_WAV=file` | record the audio mix (raw float32 stereo, 44.1 kHz) |
 | `SH2_STATS=1` | frame rate and guest heap |
-| `SH2_TRACE=1` | log every bridged Windows call (`trace=1` in `sh2e.ini` on the Switch) |
+| `SH2_TRACE=1` | log every bridged Windows call (`trace=1` with `log=1` in `sh2e.ini` on the Switch) |
 | `SH2_COVER=frame` | with a tracing build (`TRACE=$PWD/build/disasm/functions.json tools/regen.sh --recomp-only`), log each function the first time it runs after that frame |
 | `SH2_ORACLE=va,n` | differential test of one function against Unicorn (`tools/oracle.py`) |
 
