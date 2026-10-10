@@ -15,8 +15,9 @@ for the Switch's ARM64 CPU. The Windows layer the game expects (Direct3D 8, Dire
 kernel32...) is reimplemented on top of SDL2, OpenGL and FFmpeg.
 
 > [!NOTE]
-> No game files and no prebuilt NRO are included. You need your own copy of the PC game with the Enhanced Edition
-> installed, and you build the NRO from it yourself ([Building the NRO](#building-the-nro)).
+> No game files are included. You need your own copy of the PC game with the Enhanced Edition installed; the NRO
+> from [Releases](https://github.com/cutarev/sh2-nx/releases), or one you build yourself
+> ([Building the NRO](#building-the-nro)), runs it.
 
 ## Features
 
@@ -61,7 +62,8 @@ Everything since the first release:
    with at least the **Enhanced Executable**, **Essential Files**, **Image Enhancement Pack** and **Audio Enhancement
    Pack**. The port is built for the `sh2pc.exe` it installs: 5,685,248 bytes, SHA-1
    `3201a5e1029f3ae3b77770255dcbe10360b3cd09`.
-2. Build `sh2-nx.nro` from that folder ([Building the NRO](#building-the-nro)).
+2. Get `sh2-nx.nro` from [Releases](https://github.com/cutarev/sh2-nx/releases), or build it from that folder
+   ([Building the NRO](#building-the-nro)).
 3. Copy everything to the SD card. With the card (or its folder) mounted on the PC:
 
    ```sh
