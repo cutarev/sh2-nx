@@ -5,7 +5,7 @@
 </div>
 <h1 align=center>Silent Hill 2 — Nintendo Switch port</h1>
 
-<p align=center><b>v0.55</b></p>
+<p align=center><b>v0.60</b></p>
 
 A native Nintendo Switch port of the PC version of **Silent Hill 2** (Director's Cut / Restless Dreams), with
 support for the packs of **[Silent Hill 2: Enhanced Edition](https://enhanced.townofsilenthill.com/SH2/)**.
@@ -24,7 +24,7 @@ kernel32...) is reimplemented on top of SDL2, OpenGL and FFmpeg.
 - **Native code**: every function of `sh2pc.exe` runs as ARM64 code; no emulator, no Wine.
 - **Widescreen**: 16:9 at 1280x720 by default, 1920x1080 for docked play, or the original 4:3 (ThirteenAG's
   WidescreenFix, ported).
-- **Enhanced Edition packs**: HD textures, the EE title and save screens, the restored music, voices and sound
+- **Enhanced Edition packs**: HD textures and maps, the EE title and save screens, the restored music, voices and sound
   effects, EE menus and fonts. The FMV pack is not supported yet.
 - **Enhanced Edition fixes**: search camera on the right stick, movement on the d-pad, pause menu fix, vibration
   fixes.
@@ -32,6 +32,13 @@ kernel32...) is reimplemented on top of SDL2, OpenGL and FFmpeg.
 - **Saving and loading**, movies with synced audio, every menu.
 - **Shader cache**: shaders are compiled once and kept on the SD card, so areas only stutter the first time.
 - Also builds for Linux (x86-64), which is where most of the debugging happens.
+
+## What's new in v0.60
+
+- **Map**: James's arrow is back and map markings no longer spill past the map into the side bars. EE's map code
+  is ported, so the map uses the Enhanced Edition's HD map pages and fills the wide screen (the `hdmaps` setting is
+  gone).
+- **Save and load screens**: the giant names of the saves no longer cover James's face.
 
 ## What's new in v0.55
 

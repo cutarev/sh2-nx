@@ -129,6 +129,11 @@ PATCHES = [
     # -- SfxPatch (EnableSFXAddrHack): the sound bank buffer passed to the DirectSound setup.
     (0x515164, p32(0xBDDD40), p32(SFX_BUF), 'sound bank buffer'),
 
+    # -- Port choice (not EE): the save/load screen's giant translucent names of the saves around the
+    # cursor (0x452150, an original effect that covers James's face) are not drawn.
+    (0x453D36, call(0x453D36, 0x452150), b'\x90' * 5, 'save screen giant names'),
+    (0x453D40, call(0x453D40, 0x452150), b'\x90' * 5, 'save screen giant names'),
+
     # -- SaveBGImage: the save screen shows the background of the chapter being saved (ee.c resets
     # the chapter to the main scenario at the main menu).
     (0x44B419, bytes.fromhex('7d1d'), b'\x90\x90', 'save screen background per chapter'),
