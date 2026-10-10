@@ -34,7 +34,6 @@ static int match_ci(const char *dir, const char *name, char *out, size_t n) {
 /* Enhanced Edition mod folder (EE Common/FileSystemHooks.cpp): data/X is read from sh2e/X when that
  * file exists. Each top-level folder is switched on separately in sh2e.ini ("pic=1", "movie=1", ...),
  * because some EE packs only work with EE patches the port does not have yet. */
-static int hd_maps;  /* hdmaps=1 in sh2e.ini: use the HD map pages (they need EE's map scaling, not ported) */
 static int sh2e_enabled(const char *rel) {  /* rel: path after "data/" */
     static char on[32][16];
     static int n_on = -1;
@@ -44,8 +43,7 @@ static int sh2e_enabled(const char *rel) {  /* rel: path after "data/" */
         char line[128], key[16];
         int v;
         while (f && fgets(line, sizeof line, f))
-            if (sscanf(line, " %15[^= ] = %d", key, &v) == 2 && !strcmp(key, "hdmaps")) hd_maps = v;
-            else if (sscanf(line, " %15[^= ] = %d", key, &v) == 2 && v && n_on < 32) snprintf(on[n_on++], 16, "%s", key);
+            if (sscanf(line, " %15[^= ] = %d", key, &v) == 2 && v && n_on < 32) snprintf(on[n_on++], 16, "%s", key);
         if (f) fclose(f);
         if (n_on) rt_log("sh2e: %d mod folders enabled", n_on);
     }
@@ -62,8 +60,7 @@ static const char *rt_path_base(const char *guest, char *out, size_t n);
 
 const char *rt_path(const char *guest, char *out, size_t n) {
     const char *r = rt_path_base(guest, out, n);
-    int map_page = !strncasecmp(r, "data/pic/map/", 13) || !strncasecmp(r, "data/pic/add/map", 16);
-    if (!strncasecmp(r, "data/", 5) && sh2e_enabled(r + 5) && (hd_maps || !map_page)) {
+    if (!strncasecmp(r, "data/", 5) && sh2e_enabled(r + 5)) {
         char alt[512], res[512];
         struct stat st;
         snprintf(alt, sizeof alt, "sh2e/%s", r + 5);

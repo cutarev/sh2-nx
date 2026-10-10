@@ -84,7 +84,7 @@ static void fill_caps(uint32_t c) {
     v[16] = v[17] = v[18] = 0x0100 | 0x0200 | 0x0400 | 0x010000 | 0x020000 | 0x01000000 | 0x02000000;
     v[19] = v[20] = 0x1F;         /* TextureAddressCaps */
     v[21] = 0x1F;
-    v[22] = v[23] = 4096;
+    v[22] = v[23] = 8192;         /* MaxTextureWidth/Height: the EE HD map pages are 5464x4096 */
     v[24] = 512;
     v[25] = 8192;
     v[26] = 4096;

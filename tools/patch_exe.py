@@ -16,6 +16,7 @@ CAVE_SEARCH_CAMERA = 0x401460   # ee.c: StartSearchCamera_Hook
 CAVE_PAUSE_OPTIONS = 0x4015D0   # ee.c: PauseScreenASM
 CAVE_TEX_CLEAR = 0x401970       # ee.c: TexBufferASM
 CAVE_TITLE_LANG = 0x401D60      # ee.c: MainMenuTitleASM
+CAVE_MAP = 0x401240             # eight bytes apart: ee.c map hooks (EE PatchMapImages)
 # EE TexPatch buffers, in guest memory between the image and the heap (0x2500000-0x10000000):
 # 2x and 4x the largest texture file (22,380,640 bytes, sh2e/pic/map), as EE sizes them.
 TEX_BUF1, TEX_BUF2, TEX_BUF3 = 0x04000000, 0x06B00000, 0x09600000
@@ -23,6 +24,7 @@ TEX_BUF1, TEX_BUF2, TEX_BUF3 = 0x04000000, 0x06B00000, 0x09600000
 SFX_BUF = 0xD0000000
 # Guest variables owned by ee.c (0x0EC00000 page, committed in ee_init).
 EE_TEX_SCALE_X, EE_TEX_SCALE_Y = 0x0EC01000, 0x0EC01004
+EE_MAP_SCALE_X, EE_MAP_MARK_WIDTH = 0x0EC01008, 0x0EC0100C
 
 
 def call(at, target):
@@ -106,6 +108,23 @@ PATCHES = [
     # constant 1.0 at 0x62EDF4), which ee.c sets per loaded texture to new size / original size.
     (0x49F4BA, p32(0x62EDF4), p32(EE_TEX_SCALE_X), 'texture scale X'),
     (0x49F4CB, p32(0x62EDF4), p32(EE_TEX_SCALE_Y), 'texture scale Y'),
+
+    # -- FullscreenImages (PatchMapImages): the HD map pages are 5464x4096, not 1024x1024; the map, its
+    # markings and the player icon are scaled by their aspect (ee.c, from the page loaded) and the
+    # page is widened to the screen. With the original pages every value is the original.
+    *((va, p32(0x6315F8), p32(EE_MAP_SCALE_X), 'map scale (16.0)') for va in (
+        0x49DFB0, 0x49DFF3, 0x49DDC7, 0x49DE0A, 0x49B686, 0x49B6A6, 0x49CA2C, 0x49CA4C,
+        0x49DAFA, 0x49DB23, 0x49DB4B, 0x49DB7E)),
+    (0x49B660, p32(0x62FE1C), p32(EE_MAP_MARK_WIDTH), 'map marking width (0.5)'),
+    (0x49CA06, p32(0x62FE1C), p32(EE_MAP_MARK_WIDTH), 'map marking width (0.5)'),
+    *((CAVE_MAP + 8 * i, b'\xCC' * 4, b'\xC3\xCC\xCC\xCC', 'cave: map') for i in range(5)),
+    (0x49B5E9, bytes.fromhex('d80d28166300'), call(0x49B5E9, CAVE_MAP) + b'\x90', 'map marking x hook'),
+    (0x49C973, bytes.fromhex('d80d28166300'), call(0x49C973, CAVE_MAP) + b'\x90', 'map marking x hook'),
+    *((va, bytes.fromhex('d8442414d9442418'), call(va, CAVE_MAP + 8) + b'\x90' * 3, 'player icon width hook')
+      for va in (0x49D9CF, 0x49DA05, 0x49DA3B, 0x49DA71)),
+    (0x49D79A, bytes.fromhex('a128d99400'), call(0x49D79A, CAVE_MAP + 16), 'player icon x hook'),
+    (0x49F30C, bytes.fromhex('d844240cd8442418'), call(0x49F30C, CAVE_MAP + 24) + b'\x90' * 3, 'map width hook'),
+    (0x49F2EF, bytes.fromhex('a18434a300'), call(0x49F2EF, CAVE_MAP + 32), 'map x hook'),
 
     # -- SfxPatch (EnableSFXAddrHack): the sound bank buffer passed to the DirectSound setup.
     (0x515164, p32(0xBDDD40), p32(SFX_BUF), 'sound bank buffer'),

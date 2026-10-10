@@ -150,6 +150,27 @@ static uint32_t tex_load_buffer;
 #define EE_TEX_SCALE_X 0x0EC01000u
 #define EE_TEX_SCALE_Y 0x0EC01004u
 #define TEX_NAME_PTR   0x009335ACu   /* char * of the texture being loaded */
+/* Map scaling (EE PatchMapImages / SetMapImageScaling): the HD map pages are 5464x4096 (the square
+ * map between black bands) where the originals are 1024x1024. tools/patch_exe.py points the map's scale constants here and hooks the
+ * caves below; a page's aspect scales the map, its markings and the player icon, and the page is
+ * widened to the screen. An original page gives every value its original. */
+#define MAP_SCALE_X    0x0EC01008u   /* 16 / aspect (was 16.0) */
+#define MAP_MARK_WIDTH 0x0EC0100Cu   /* 0.5 * aspect (was 0.5) */
+#define MAP_ID         0x0094D928u
+extern uint32_t ee_res_w, ee_res_h;  /* d3d8.c */
+static float map_aspect = 1.0f, map_width;
+static int32_t map_res_x, map_res_x43;
+static void ee_map_scaling(uint32_t w, uint32_t h) {
+    float a = (float)h / w, gw = ee_res_w, gh = ee_res_h, s = 16.0f / a, mw = 0.5f * a;
+    map_aspect = a;
+    map_res_x = (uint32_t)(gw * (gh / (gw * (a * 0.75f))));
+    map_res_x43 = (uint32_t)(gw * ((gh / gw) / 0.75f));
+    map_width = (float)(map_res_x43 - map_res_x);
+    memcpy(GPTR(MAP_SCALE_X), &s, 4);
+    memcpy(GPTR(MAP_MARK_WIDTH), &mw, 4);
+    rt_log("ee: map page %ux%u -> aspect %.3f, widened by %.0f", w, h, a, map_width);
+}
+
 /* Called for every file the game opens for reading (EE OnFileLoadTex): a texture EE lists by its
  * original size sets the scale from the header of the file actually opened (sh2e or data). */
 void ee_file_opened(const char *guest, FILE *f) {
@@ -183,6 +204,7 @@ void ee_file_opened(const char *guest, FILE *f) {
         rt_log("ee: %s %ux%u -> texture scale %.3f %.3f", name, w, h, sx, sy);
         memcpy(GPTR(EE_TEX_SCALE_X), &sx, 4);
         memcpy(GPTR(EE_TEX_SCALE_Y), &sy, 4);
+        if (t->map) ee_map_scaling(w, h);
         return;
     }
 }
@@ -219,7 +241,6 @@ static void ws_setf(uint32_t va, float v) { memcpy(GPTR(va), &v, 4); }
 static float ws_getf(uint32_t va) { float v; memcpy(&v, GPTR(va), 4); return v; }
 static float ws_text(void) { return ws_getf(WS_VAR(V_TEXT)); }
 
-extern uint32_t ee_res_w, ee_res_h;  /* d3d8.c */
 static void ee_widescreen_init(void) {
     uint32_t w = 1280, h = 720;
     FILE *f = fopen("sh2e.ini", "r");
@@ -345,12 +366,50 @@ void sub_00401200(void) {  /* mov eax, [0xA32894] */
     g_esp += 4;
 }
 
+/* Map hooks (caves at 0x401240 + 8 i, see ee_map_scaling). The widening applies while the texture
+ * last loaded is a map one (EE CheckMapTexture). */
+static int map_texture(void) {
+    uint32_t p = MEM32(TEX_NAME_PTR);
+    if (!p) return 0;
+    for (size_t i = 0; i < sizeof ee_texture_list / sizeof *ee_texture_list; i++)
+        if (ee_texture_list[i].map && !strcmp(ee_texture_list[i].name, (const char *)GPTR(p))) return 1;
+    return 0;
+}
+void sub_00401240(void) {  /* map marking x: fmul [0.0625], then / (1 / aspect) */
+    ST(0) = (float)(ST(0) * 0.0625f);
+    ST(0) = (float)(ST(0) / (1.0f / map_aspect));
+    g_esp += 4;
+}
+void sub_00401248(void) {  /* player icon width * aspect; fadd [esp+0x14]; fld [esp+0x18] */
+    ST(0) = (float)(ST(0) * map_aspect);
+    ST(0) = (float)(ST(0) + ws_getf(ws_esp() + 0x14));
+    rt_fpush(ws_getf(ws_esp() + 0x18));
+    g_esp += 4;
+}
+void sub_00401250(void) {  /* player icon x ([ebx]) * aspect; mov eax, [map id] */
+    ws_setf(g_ebx, (float)(ws_getf(g_ebx) * map_aspect));
+    g_eax = MEM32(MAP_ID);
+    g_esp += 4;
+}
+void sub_00401258(void) {  /* fadd [esp+0xC]; fadd [esp+0x18]; a map page is wider */
+    ST(0) = (float)(ST(0) + ws_getf(ws_esp() + 0xC));
+    ST(0) = (float)(ST(0) + ws_getf(ws_esp() + 0x18));
+    if (map_texture()) ST(0) = (float)(ST(0) + map_width);
+    g_esp += 4;
+}
+void sub_00401260(void) {  /* mov eax, [height]; a map page's screen x (edx) moves with the widening */
+    if (map_texture()) g_edx = (uint32_t)(int32_t)lrint((map_res_x - map_res_x43) / 2.0 + (int32_t)g_edx);
+    g_eax = MEM32(0x00A33484u);
+    g_esp += 4;
+}
+
 /* Called once after sh2pc.exe is loaded. */
 void ee_init(void) {
     host_arena_commit(TEX_BUF1, TEX_BUF3 + 2 * TEX_SIZE - TEX_BUF1);
     host_arena_commit(TITLE_PATHS, 0x10000);
     ee_sfx_init();
     ee_widescreen_init();
+    ee_map_scaling(1024, 1024);
     float one = 1.0f;
     memcpy(GPTR(0x0EC01000u), &one, 4);  /* texture scale X/Y (FullscreenImages) */
     memcpy(GPTR(0x0EC01004u), &one, 4);
@@ -522,6 +581,11 @@ recomp_func_t ee_lookup_manual(uint32_t va) {
     case 0x004011F0u: return sub_004011F0;
     case 0x004011F8u: return sub_004011F8;
     case 0x00401200u: return sub_00401200;
+    case 0x00401240u: return sub_00401240;
+    case 0x00401248u: return sub_00401248;
+    case 0x00401250u: return sub_00401250;
+    case 0x00401258u: return sub_00401258;
+    case 0x00401260u: return sub_00401260;
     }
     return NULL;
 }

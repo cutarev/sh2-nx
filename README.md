@@ -128,7 +128,6 @@ button is in the same place as on an Xbox pad with the Enhanced Edition. Remap t
 | `pic=1`, `sound=1`, `bg=1`, ... | read that folder of `data/` from `sh2e/` (the Enhanced Edition pack) |
 | `movie=0` | keep it off: the FMV pack's 60 fps videos play at half speed until its frame-rate patch is ported |
 | `resolution=1280x720` | the default; `1920x1080` for docked play, `960x720` for the original 4:3 |
-| `hdmaps=1` | the HD map pages (their layout is off: EE's map scaling is not ported) |
 | `cores=1` | every game thread on one core, a fallback if the music ever loops again |
 | `log=1` | write `sh2.log` next to the NRO, for bug reports (off by default: it costs an SD card write per line). Crashes always go to `sh2-crash.log` |
 

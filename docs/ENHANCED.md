@@ -110,3 +110,11 @@ PauseScreenFix.
   MapXPosASM, map icon scaling), which is not ported: with them the map drew 160 px too far right and cropped. By default
   those pages now come from the original `data/pic/map` (the layout WidescreenFix was written for); `hdmaps=1` in sh2e.ini
   opts back in to the HD pages. Everything else in `pic` stays HD.
+- **Map screen (after v0.55)**: mixing the original pages with the rest of `pic` lost the player icon (its HD atlas
+  `pic/etc/carsol.tex` is 4x the original, and the sprite code divides its texel coordinates by the texture size times
+  the texture scale of the page loaded, 1 for an original page) and left map markings drawn past the 4:3 page in the side
+  bars. EE's map code is now ported (PatchMapImages: the map, marking and icon scale constants point at ee.c variables,
+  and caves at 0x401240 redo MapMarkingXPosASM, PlayerIconWidthASM, PlayerIconXPosASM, MapWidthASM and MapXPosASM), so the
+  HD pages are always used with `pic=1`: a 5464x4096 page (the square map between black bands) is drawn across the
+  whole screen, the icon and markings land on it, and the `hdmaps` setting is gone. The device reports 8192 as the
+  largest texture (it said 4096 and the game cut the page to that width).
