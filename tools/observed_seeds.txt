@@ -1,4 +1,5 @@
 # Function entries the running game reached that the disassembler had missed: each from a
 # "indirect call to untranslated address" fatal. tools/seeds.py marks them observed, which lets them
 # split a function the sweep decoded through a data table.
-0x0054D6A0
+0x0054D6A0  a jmp thunk after a jump table
+0x004F12C0  firing a gun (callback the game passes to 0x570B80; 0x4F12AA, the switch tables before it, was swept as code)
