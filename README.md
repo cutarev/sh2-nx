@@ -5,7 +5,7 @@
 </div>
 <h1 align=center>Silent Hill 2 — Nintendo Switch port</h1>
 
-<p align=center><b>v0.61</b></p>
+<p align=center><b>v0.62</b></p>
 
 A native Nintendo Switch port of the PC version of **Silent Hill 2** (Director's Cut / Restless Dreams), with
 support for the packs of **[Silent Hill 2: Enhanced Edition](https://enhanced.townofsilenthill.com/SH2/)**.
@@ -32,6 +32,13 @@ kernel32...) is reimplemented on top of SDL2, OpenGL and FFmpeg.
 - **Saving and loading**, movies with synced audio, every menu.
 - **Shader cache**: shaders are compiled once and kept on the SD card, so areas only stutter the first time.
 - Also builds for Linux (x86-64), which is where most of the debugging happens.
+
+## What's new in v0.62
+
+- **Crash in Blue Creek Apartments** fixed (using the save point, or leaving the room past the fire exit, closed the
+  game): part of an effect's update code had been missed by the recompiler. Thanks to Jlancaster94 for the report and
+  the save.
+- With `log=1`, `sh2.log` names every file the game could not open, which pins down "Files are missing" errors.
 
 ## What's new in v0.61
 
