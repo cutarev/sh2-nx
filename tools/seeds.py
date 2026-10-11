@@ -141,7 +141,13 @@ for name, va, raw, size in (('.rdata', 0x629000, 0x229000, 0x16F494), ('.data', 
     for o in range(0, size - 3, 4):
         data_ptrs.add(struct.unpack_from('<I', d, raw + o)[0])
 cands = set(data_ptrs)
-cands |= {int(x['to'], 16) for x in json.load(open(XREFS)) if x['type'] in ('data_imm', 'call', 'jump')}
+xrefs = json.load(open(XREFS))
+cands |= {int(x['to'], 16) for x in xrefs if x['type'] in ('data_imm', 'call', 'jump')}
+# A jcc out of a function into a gap: code after a ret that the function branches back into (0x4D0E85, the
+# state-0 path of an effect's update at 0x4D0E20). Unseeded, the jcc lifts as a tail call to a stub.
+# Only jumps the function's own code reaches count: decoding a jump table yields jccs into gaps too.
+cands |= {int(x['to'], 16) for x in xrefs if x['type'] == 'cond_jump' and containing(int(x['to'], 16)) is None
+          and containing(int(x['from'], 16)) and int(x['from'], 16) in reached(containing(int(x['from'], 16)))}
 ends_before = list(itertools.accumulate((e for _, e in funcs), max))  # aliases overlap their parent
 gap_entries = sorted(a for a in cands if gap_entry(a))
 observed = {int(l.split()[0], 16) for l in open('tools/observed_seeds.txt') if l.strip() and not l.startswith('#')}
