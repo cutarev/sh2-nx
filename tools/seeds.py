@@ -148,6 +148,9 @@ cands |= {int(x['to'], 16) for x in xrefs if x['type'] in ('data_imm', 'call', '
 # Only jumps the function's own code reaches count: decoding a jump table yields jccs into gaps too.
 cands |= {int(x['to'], 16) for x in xrefs if x['type'] == 'cond_jump' and containing(int(x['to'], 16)) is None
           and containing(int(x['from'], 16)) and int(x['from'], 16) in reached(containing(int(x['from'], 16)))}
+# The Eddie cutscene's state-0 branch follows a ret, but shares the frame of 0x59CC00.
+# Seeding it splits the callback and leaves the jump to 0x59CCF3 untranslated.
+cands.discard(0x59CCB6)
 ends_before = list(itertools.accumulate((e for _, e in funcs), max))  # aliases overlap their parent
 gap_entries = sorted(a for a in cands if gap_entry(a))
 observed = {int(l.split()[0], 16) for l in open('tools/observed_seeds.txt') if l.strip() and not l.startswith('#')}
