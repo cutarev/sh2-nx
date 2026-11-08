@@ -461,6 +461,8 @@ static const int32_t pad_defaults[44] = {
 
 WINAPI(DirectInput8Create, "DirectInput8Create", 5) {
     SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
+    /* The game reads DIJOYSTATE2 even if no pad was enumerated. Start all four POVs centered. */
+    memset(GPTR(0x00940F40u), 0xFF, 4 * sizeof(uint32_t));
     memcpy(GPTR(0x75A208), pad_defaults, sizeof pad_defaults);
     MEM32(ARG(3)) = com_new(com_vtable(di_vt, sizeof di_vt / sizeof *di_vt), 8);
     return 0;
