@@ -1,3 +1,4 @@
+#include <stdbool.h>
 /* Silent Hill 2 Enhancements (github.com/elishacloud/Silent-Hill-2-Enhancements, zlib license) ported
  * to the recompiled v1.0 executable. EE patches the game at run time from a d3d8.dll; here the code
  * patches are applied to the exe before recompilation (tools/patch_exe.py) and EE's hooks become the

@@ -171,9 +171,11 @@ static GLenum face_target(Res *t, int face) {
     return t->kind == RES_CUBE ? GL_TEXTURE_CUBE_MAP_POSITIVE_X + face : GL_TEXTURE_2D;
 }
 
-/* Screen-sized render and depth targets are the ones drawn at rt_scale (d3d8.h). */
+/* Smaller render targets can share the screen-sized depth buffer. Scale both attachments in the
+ * same coordinate space so the depth buffer still covers the whole color target after scaling. */
 int res_scaled(const Res *t) {
-    return rt_scale != 1 && (t->is_rt || t->is_depth) && t->kind != RES_CUBE && t->w == dev->bb_w && t->h == dev->bb_h;
+    return rt_scale != 1 && (t->is_rt || t->is_depth) && t->kind != RES_CUBE &&
+           t->w <= dev->bb_w && t->h <= dev->bb_h;
 }
 
 /* Creates the GL texture of a texture or standalone surface, with every level allocated. A render-scaled
@@ -207,18 +209,19 @@ static void gl_ensure(Res *t) {
 
 static GLuint surface_tex(Res *s) { if (s->parent) { gl_ensure(s->parent); return s->parent->tex; } gl_ensure(s); return s->tex; }
 
-void res_scale_factors(Res *s, float *sx, float *sy) {
-    Res *t = s->parent ? s->parent : s;
-    surface_tex(s);
-    *sx = t->tw == t->w ? 1 : (float)t->tw / t->w;
-    *sy = t->th == t->h ? 1 : (float)t->th / t->h;
-}
-
 /* The GL size of a surface's level. */
 static void gl_level_size(Res *s, uint32_t *w, uint32_t *h) {
     Res *t = s->parent ? s->parent : s;
     *w = t->tw >> s->level ? t->tw >> s->level : 1;
     *h = t->th >> s->level ? t->th >> s->level : 1;
+}
+
+void res_scale_factors(Res *s, float *sx, float *sy) {
+    uint32_t w, h;
+    surface_tex(s);
+    gl_level_size(s, &w, &h);
+    *sx = w == s->w ? 1 : (float)w / s->w;
+    *sy = h == s->h ? 1 : (float)h / s->h;
 }
 
 /* ---- copies ----

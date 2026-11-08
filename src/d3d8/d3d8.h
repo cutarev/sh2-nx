@@ -43,11 +43,10 @@ void res_addref(uint32_t obj);
 void res_release(uint32_t obj);
 
 /* ---- render scale ----
- * Screen-sized render and depth targets are drawn at rt_scale times the game's resolution (the Switch
- * renders 720 lines in handheld mode and the game's 1080 docked, whatever it lays itself out for) and the
- * result is scaled to the screen at Present. The game never sees it: viewports, scissors, clear and copy
- * rectangles are scaled on the way to GL, and anything that crosses into guest memory (locks,
- * GetFrontBuffer, CopyRects to an image surface) goes through a texture of the game's size. */
+ * Render and depth targets that fit within the backbuffer share its scale so they can share depth.
+ * Present scales the result to the screen. The game still sees logical sizes. Viewports, scissors,
+ * clear and copy rectangles are scaled on the way to GL. Transfers across guest memory (locks,
+ * GetFrontBuffer, CopyRects to an image surface) go through a texture at the logical size. */
 extern float rt_scale;           /* 1: no scaling */
 int res_scaled(const Res *t);    /* a texture or standalone surface drawn at rt_scale */
 /* x and y factors from game pixels to the GL texels of surface s (1, 1 unless scaled). Creates the GL texture. */
