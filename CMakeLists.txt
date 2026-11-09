@@ -34,7 +34,7 @@ if(NINTENDO_SWITCH)
   if(SH2_LEAN)
     target_compile_definitions(sh2 PRIVATE SH2_LEAN RECOMP_NO_ICALL_TRACE)
   endif()
-  nx_generate_nacp(sh2.nacp NAME "Silent Hill 2" AUTHOR "sh2-nx" VERSION "1.02")
+  nx_generate_nacp(sh2.nacp NAME "Silent Hill 2" AUTHOR "sh2-nx" VERSION "1.03")
   nx_create_nro(sh2 OUTPUT sh2-nx.nro NACP sh2.nacp NOICON)
 else()
   # GL is loaded at run time through SDL (src/d3d8/gl.c), so nothing links libGL.

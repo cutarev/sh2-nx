@@ -7,7 +7,7 @@
 
 <p align=center><a href="https://discord.gg/H9yb3hSkvf"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?logo=discord&logoColor=white" alt="Discord"></a></p>
 
-<p align=center><b>v1.02</b></p>
+<p align=center><b>v1.03</b></p>
 
 A native Nintendo Switch port of the PC version of **Silent Hill 2** (Director's Cut / Restless Dreams), with
 support for the packs of **[Silent Hill 2: Enhanced Edition](https://enhanced.townofsilenthill.com/SH2/)**.
@@ -178,6 +178,8 @@ build/linux/sh2 game
 - **Konami and Team Silent**: creators of Silent Hill 2. This is an unofficial, fan-made port with no affiliation.
 - **[r4lix](https://github.com/r4lix/sh2-nx)** and Le Z: the Enhanced Edition support, widescreen, HD rumble, the
   shader cache and the lifter, save and front buffer fixes in v0.55.
+- **[Ligux01](https://github.com/Ligux01)**: the Eddie room crash, handheld render target scaling and controller POV fixes
+  in v1.03.
 - **[Silent Hill 2 Enhancements](https://github.com/elishacloud/Silent-Hill-2-Enhancements)** by Elisha Riedlinger and
   contributors (zlib): the patches ported in `src/game/ee.c` and `tools/patch_exe.py`.
 - **[WidescreenFixesPack](https://github.com/ThirteenAG/WidescreenFixesPack)** by ThirteenAG (MIT): the widescreen fix.
